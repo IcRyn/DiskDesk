@@ -217,43 +217,11 @@ local previous=term.write
 term.write=function(s) if s:find('USO 50%',1,true) then sawUsage=true end; previous(s) end
 char('q')
 ''', "assert(sawUsage and #bootFrames==4)")
-test('RAID automatic sync on boot action and timer', '''
-syncCalls=0
-serviceOverride=function(m) m.raidSync=function() syncCalls=syncCalls+1; return 'Sincronizado' end end
-events[#events+1]={'timer',1}; char('n'); answer('sincronizada'); char('q')
-''', "assert(syncCalls==3 and files.sincronizada=='dir')")
-test('RAID6 indicator discovers five members and reports losses and return', '''
-missingCount=0; seenStates={}
-arraySource=[=[return function() return {
-  list=function() return missingCount==5 and {} or {{id='set6',mode='6',n=5}} end,
-  status=function() local missing={}; for i=1,missingCount do missing[i]=i end
-    return {missing=missing,readable=missingCount<=2} end
-} end]=]
+test('main screen omits RAID status banner', '''
 local write=term.write
-term.write=function(s) seenStates[s]=true; write(s) end
-events[#events+1]={'timer',1,apply=function() missingCount=1 end}
-events[#events+1]={'timer',2,apply=function() missingCount=2 end}
-events[#events+1]={'timer',3,apply=function() missingCount=3 end}
-events[#events+1]={'timer',4,apply=function() missingCount=5 end}
-events[#events+1]={'timer',5,apply=function() missingCount=0 end}
+term.write=function(s) assert(not s:find('RAID:',1,true)); write(s) end
 char('q')
-''', '''
-for _,expected in ipairs({'6 Ativo (5/5)','6 Degradado (4/5)','6 Degradado (3/5)',
-  '6 Indisponivel (2/5)','6 Indisponivel (0/5)'}) do
-  local found=false; for text in pairs(seenStates) do if text:find(expected,1,true) then found=true end end
-  assert(found,'Missing indicator: '..expected)
-end
-''')
-test('RAID array indicator refreshes after creating a set', '''
-created=false; sawArray=false
-arraySource=[=[return function() return {
-  list=function() return created and {{id='new6',mode='6',n=5}} or {} end,
-  status=function() return {missing={},readable=true} end
-} end]=]
-local write=term.write
-term.write=function(s) if s:find('6 Ativo (5/5)',1,true) then sawArray=true end; write(s) end
-events[#events+1]={'char','a',apply=function() created=true end}; key('f1'); char('q')
-''', 'assert(sawArray)')
+''', 'assert(#snapshots>0)')
 test('move action and paste use verified service', '''
 serviceOverride=function(m)
   m.moveItem=function(source,target,guard)
@@ -269,28 +237,8 @@ test('bordered menus fit compact terminal', '''
 screenW=30; screenH=12
 local write=term.write
 term.write=function(s) if s:sub(1,1)=='+' and s:sub(-1)=='+' then borderSeen=true end; write(s) end
-char('a'); key('down'); key('down'); key('enter'); key('down'); key('down'); key('enter')
-key('down'); key('down'); key('enter'); key('enter'); char('q')
+char('a'); key('down'); key('down'); key('enter'); key('f1'); char('q')
 ''', 'assert(borderSeen)')
-test('checkbox selection configures multiple RAID mirrors', '''
-files.disk2='dir'; files.disk3='dir'
-local ids={left=1,right=2,top=3}; local roots={left='disk',right='disk2',top='disk3'}
-peripheral.getNames=function() return {'left','right','top'} end
-peripheral.hasType=function(name,kind) return ids[name]~=nil and kind=='drive' end
-disk.getID=function(name) return ids[name] end
-disk.getMountPath=function(name) return roots[name] end
-disk.getLabel=function(name) return 'Disco '..ids[name] end
-serviceOverride=function(m)
-  m.raidStatus=function() return {enabled=false,text='Desativado'} end
-  m.raidSync=function() return 'Desativado' end
-  m.raidConfigure=function(primary,mirrors,mode)
-    assert(primary.id==1 and #mirrors==2 and mirrors[1].id==2 and mirrors[2].id==3 and mode=='root')
-    configured=true
-  end
-end
-char('i'); key('enter'); key('down'); key('down'); key('enter'); key('enter')
-key('enter'); key('down'); key('enter'); key('up'); key('up'); key('enter'); char('s'); char('q')
-''', 'assert(configured)')
 test('click confirm no', "selectText(); char('x'); events[#events+1]={'mouse_click',1,10,17}; char('q')", "assert(files['note.txt']=='hello')")
 test('wireless send dialog and progress', '''
 serviceOverride=function(m)

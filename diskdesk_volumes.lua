@@ -419,6 +419,21 @@ function V.rebuild(volume,slot,dest,progress)
   local next=clone(c); next.seq=c.seq+1; next.members[slot]=dest.id
   commit(next,c,true); return next
 end
+function V.delete(volume)
+  local c=registry[volume.id]; if not c then fail('Unidade RAID nao encontrada.') end
+  local units=members(c,true)
+  for _,unit in ipairs(units) do S.guard(unit) end
+  -- Remove only this volume's objects and redundant catalog. Other physical files stay intact.
+  for _,entry in pairs(c.entries) do if entry.object then A.removeData(entry.object,units) end end
+  for _,unit in ipairs(units) do
+    S.guard(unit)
+    local path=P.combine(unit.root,'.diskdesk-vdata/volume-'..c.id)
+    if P.exists(path) then P.delete(path) end
+  end
+  local localPath=P.combine(configRoot,c.id)
+  if P.exists(localPath) then P.delete(localPath) end
+  registry[c.id]=nil
+end
 function V.import()
   local candidates={}
   for _,unit in pairs(devices()) do

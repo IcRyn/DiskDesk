@@ -200,6 +200,19 @@ M.assertWritable('disk/root.txt')
 M.raidDisable(); M.assertWritable('disk2/RAID1/root.txt')
 assert(files['disk2/RAID1/root.txt']=='root' and not files['.diskdesk-raid.cfg'])
 ''')
+test('backup RAID1 copies one verified version to multiple independent disks', r'''
+files.disk3=true; volumes.top={root='disk3',id=30}; local third=M.capture('top')
+local results=M.backupMany(src,{dest,third})
+assert(#results==2 and files[results[1]..'/data/root.txt']=='root')
+assert(files[results[2]..'/data/root.txt']=='root')
+assert(#M.snapshots(dest)==1 and #M.snapshots(third)==1)
+files[results[1]..'/data/root.txt']='changed backup copy'
+assert(files[results[2]..'/data/root.txt']=='root')
+''')
+test('backup RAID1 rejects duplicate destination before writing', r'''
+fails(function() M.backupMany(src,{dest,dest}) end,'diferentes')
+assert(not files['disk2/.diskdesk-backups'])
+''')
 test('root RAID copies everything and removes extra destination files', RAID + '''
 files['disk/.diskdesk-backups']=true; files['disk/.diskdesk-backups/keep']='history'
 files['disk2/extra']='old unrelated'

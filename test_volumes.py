@@ -206,6 +206,22 @@ M.compress(rootPath..'/docs','disk2/docs.ddz')
 M.extract('disk2/docs.ddz',rootPath..'/restored')
 assert(get(rootPath..'/restored/docs/a')==string.rep('abc',1000))
 ''')
+test('delete volume removes its data and catalogs but preserves physical files', '''
+local c=create('5',3); put(rootPath..'/test','delete me')
+for i=1,3 do files['member'..i..'/keep.txt']='preserve' end
+V.delete(c)
+assert(#V.list()==0 and not fs.exists('.diskdesk-volumes/'..c.id))
+for i=1,3 do
+  assert(files['member'..i..'/keep.txt']=='preserve')
+  assert(not fs.exists('member'..i..'/.diskdesk-vdata/volume-'..c.id))
+end
+restart(); assert(#V.list()==0 and V.import()==0)
+''')
+test('delete volume requires every member', '''
+local c=create('1',2); put(rootPath..'/test','keep'); remove(2)
+assert(not pcall(V.delete,c)); reconnect(); restart()
+assert(get(rootPath..'/test')=='keep')
+''')
 
 # Drive the real explorer with the same storage mock to cover UI -> virtual FS -> stripes.
 ui_tree = ast.parse((root / 'test_diskdesk.py').read_text(encoding='utf-8'))

@@ -24,7 +24,7 @@ Depois, execute **`/diskdesk`** de qualquer pasta (ou `diskdesk` na raiz).
 
 Ao atualizar, a pasta antiga `/diskdesk-app` e o atalho anterior são guardados em `/diskdesk-backup-<identificador>/previous/`. Os arquivos novos são preparados antes de substituir a instalação; se a publicação falhar, tenta restaurar a versão anterior e informa a pasta de recuperação. O instalador não modifica `startup` nem arquivos dos disquetes. Se a energia acabar durante a instalação, consulte essa pasta para recuperação manual.
 
-O instalador ainda precisa ser transferido para o jogo uma vez. Esta versão ultrapassa 128 KiB e pode não caber em um floppy comum. Use o download acima, a transferência de arquivos para o computador do jogo ou a instalação manual dos módulos. Depois de transferido, ele funciona sem HTTP.
+O instalador ainda precisa ser transferido para o jogo uma vez. Ele ocupa cerca de 124 KiB e cabe por pouco em um floppy vazio de 128 KiB. O download direto é mais simples. Depois de transferido, ele funciona sem HTTP.
 
 ### Instalação manual
 
@@ -76,7 +76,7 @@ O editor é o `edit` do CraftOS: Ctrl abre Salvar e Sair. Copiar/colar não sobr
 
 Ao iniciar o DiskDesk, uma tela de boot mostra o carregamento do explorador e a preparação dos dispositivos. É a abertura do programa, não uma alteração do boot do CraftOS nem do arquivo startup.
 
-**USO** mostra a ocupação do disco atual. **D** abre o painel de armazenamento com porcentagem, barra, espaço livre e capacidade de cada unidade. As barras ficam vermelhas a partir de 90%. Quando a capacidade não está disponível, aparece `--`. Clique na unidade ou use setas e Enter para abri-la. **A → RAID e backup** reúne configuração, sincronização, backup e restauração.
+**USO** mostra a ocupação do disco atual. **D** abre o painel de armazenamento com porcentagem, barra, espaço livre e capacidade de cada unidade. As barras ficam vermelhas a partir de 90%. Quando a capacidade não está disponível, aparece `--`. Clique na unidade ou use setas e Enter para abri-la. **A → RAID e backup** reúne unidades RAID, backup em vários discos e restauração.
 
 H abre a **Central de ajuda**, dividida por assuntos, com texto ajustado à tela, rolagem, botões de tópicos e navegação por setas. F1 ou Voltar retorna ao explorador.
 
@@ -85,26 +85,6 @@ H abre a **Central de ajuda**, dividida por assuntos, com texto ajustado à tela
 Selecione o item, pressione **M**, entre na pasta de destino e use **V**. O item é copiado para um destino temporário e verificado antes de remover a origem, inclusive entre computador e disquetes. Pastas vazias e arquivos binários são preservados. O nome do destino não é sobrescrito: se existir, escolha outro.
 
 Se faltar espaço ou houver falha, a origem fica preservada enquanto a cópia não foi publicada. Pode sobrar um `.partial`. Se a remoção da origem falhar após a publicação, confira os dois locais: a cópia verificada já está no destino. Mantenha os discos inseridos durante a operação.
-
-## RAID e espelhamento automático por arquivos
-
-Use **A → RAID e backup → Espelhamento automático RAID 1** ou **I**. Escolha o modo, o disco principal e os destinos. Na seleção múltipla, marque os discos com clique ou Enter e escolha **Confirmar**:
-
-- **RAID 1 na raiz:** copia toda a estrutura diretamente para o outro floppy, incluindo arquivos soltos, pastas e histórico de backup. Não cria a pasta `RAID1`.
-- **RAID 1 em pasta:** mantém o modo anterior, usando `RAID1/` no destino e preservando o que está fora dela. Não replica `.diskdesk-backups`.
-- **Vários espelhos:** copia o principal na raiz de até oito floppies, cada um com sua própria cópia completa.
-
-**Na raiz, arquivos extras do destino são removidos para igualá-lo ao principal.** O programa pede confirmação ao configurar. Alterações e exclusões também são replicadas depois: use backup versionado para guardar versões antigas. Configurações anteriores continuam no modo em pasta; desative e configure novamente para trocar o modo.
-
-A configuração fica em `/.diskdesk-raid.cfg`, fora da instalação, e identifica os discos pelo ID. Trabalhe no principal: o DiskDesk bloqueia escrita nos espelhos pelas suas próprias operações. Outros programas não recebem essa proteção.
-
-Sincroniza na abertura, depois de ações, ao detectar discos e aproximadamente a cada 10 segundos enquanto o explorador está ativo. Editor, ajuda e diálogos adiam a sincronização até o retorno. Mostra **Sincronizado**, **Pendente** ou **Degradado**. Se um espelho faltar, os outros ainda são atualizados; se faltar o principal, nada é copiado. Recoloque os mesmos discos para continuar.
-
-A atualização prepara e verifica uma cópia completa antes da publicação. O destino precisa comportar **a cópia antiga e a nova ao mesmo tempo**, além das pastas e do registro de recuperação. Não soma a capacidade dos discos. Limite de 1024 itens e 32 níveis de pastas. Nomes começando com `.diskdesk-raid-` são reservados no modo raiz.
-
-Os registros e diretórios `.diskdesk-raid-*` permitem recuperar uma publicação interrompida na próxima sincronização. Não os altere manualmente enquanto o conjunto estiver ativo. Se não houver registro válido para recuperar, o programa interrompe a operação e exige conferência manual. Mantenha os discos conectados durante a cópia.
-
-Para recuperar após perder o principal, copie os dados de um espelho para outro disco: da raiz ou de `RAID1/`, conforme o modo. Esse modo de espelhamento não tem promoção automática nem unidade virtual. Desativá-lo mantém os dados já gravados. Para uma unidade com capacidade conjunta, use o painel descrito a seguir.
 
 ## Unidade RAID com capacidade conjunta e atualização durante o uso
 
@@ -120,43 +100,17 @@ Copie com **C**, ou marque para mover com **M**, abra essa nova unidade e pressi
 | RAID 6 | 4 | (N−2) × tamanho do menor disco | Dois membros ausentes |
 | RAID 1+0 | 4, quantidade par | (N÷2) × tamanho do menor disco | Um ausente por par |
 
-Até oito membros por unidade. Há uma reserva de 8 KiB por membro para índices; os diretórios e índices adicionais também consomem espaço. Arquivos que já estavam na raiz física dos disquetes reduzem o espaço livre, mas **não entram na unidade automaticamente**. Discos de tamanhos diferentes são limitados pelo menor. Os membros não podem pertencer a duas unidades virtuais locais nem ao espelhamento automático antigo ao criar a unidade.
+Até oito membros por unidade. Há uma reserva de 8 KiB por membro para índices; os diretórios e índices adicionais também consomem espaço. Arquivos que já estavam na raiz física dos disquetes reduzem o espaço livre, mas **não entram na unidade automaticamente**. Discos de tamanhos diferentes são limitados pelo menor. Os membros não podem pertencer a duas unidades virtuais locais.
 
 Ao editar, o DiskDesk abre um rascunho no computador. **Salvar e sair do editor** publica a alteração nos discos. Se a publicação falhar, informa onde o rascunho foi preservado. A versão nova de um arquivo é preparada antes de substituir a anterior, então alterar um arquivo exige espaço temporário para as duas versões. Se a origem de um movimento estiver num membro quase cheio, passe o arquivo pelo computador antes de colocá-lo na unidade, pois a origem só será removida após a cópia verificada. O limite é de 8 MiB menos um byte por arquivo e 1024 entradas de catálogo, incluindo a raiz; a capacidade física geralmente será menor. Pastas com vários arquivos são processadas arquivo por arquivo.
 
 Se faltar um membro, a unidade permite leitura quando a redundância é suficiente e **bloqueia gravações até a reconstrução**. Use **Gerenciar unidade RAID → Substituir membro ausente**. Retire o membro defeituoso e escolha um disquete substituto com espaço suficiente. RAID 6 pode reconstruir os dois membros ausentes em etapas. **Verificar arquivos / catálogo** identifica arquivos com membros ausentes ou corrompidos e atualiza as cópias do catálogo nos discos.
 
+Use **Excluir unidade RAID** para apagar o catálogo e todos os arquivos internos daquela unidade. Todos os membros precisam estar conectados. A confirmação não remove arquivos físicos que estejam fora da unidade.
+
 As unidades são gerenciadas **dentro do DiskDesk**; não são montagens globais para outros programas do CraftOS. O catálogo ativo fica em `/.diskdesk-volumes/` e cópias dele ficam nos membros, junto aos blocos em `.diskdesk-vdata/`. O instalador preserva esses dados. **Importar unidade dos discos** recupera a unidade em outro computador usando os catálogos e membros disponíveis. Não use a mesma unidade para gravação simultânea por vários computadores.
 
 Uma falha pode deixar blocos temporários ou antigos ocupando espaço. O programa preserva os arquivos confirmados; não apague os arquivos internos manualmente. Se uma cópia redundante do catálogo falhar, o programa avisa: mantenha o catálogo do computador e use Verificar antes de tentar importar em outra máquina.
-
-Se você já tinha criado um conjunto de arquivo da versão anterior, ele continua no menu abaixo. Para passar seu conteúdo à unidade virtual, restaure os arquivos e copie/mova para a nova unidade; não há conversão automática.
-
-## Conjuntos RAID 0, 1, 5, 6 e 1+0
-
-**A → RAID e backup → Conjuntos RAID** guarda uma versão do arquivo ou pasta selecionado em blocos distribuídos pelos disquetes. É armazenamento próprio do DiskDesk: não monta uma unidade virtual do CraftOS, não altera a API `fs` e não sincroniza alterações posteriores automaticamente. Para guardar alterações, crie um novo conjunto; o anterior permanece disponível.
-
-| Modo | Discos | Dados úteis aproximados* | Perdas recuperáveis |
-|---|---|---|---|
-| RAID 0 | 2 a 8 | N × capacidade do menor disco | Nenhuma; precisa de todos os membros |
-| RAID 1 | 2 a 8 | Capacidade do menor disco | Até N−1 discos |
-| RAID 5 | 3 a 8 | (N−1) × capacidade do menor disco | Qualquer disco isolado |
-| RAID 6 | 4 a 8 | (N−2) × capacidade do menor disco | Quaisquer dois discos |
-| RAID 1+0 | 4, 6 ou 8 | (N÷2) × capacidade do menor disco | Um por par; perder os dois de um par impede restaurar |
-
-*Antes dos índices, arredondamento dos blocos e arquivos já presentes nos discos. O conteúdo original de cada conjunto continua limitado a 512 KiB e 1024 itens pela compactação DDZ.
-
-1. Selecione um arquivo ou pasta no explorador.
-2. Abra **Conjuntos RAID → Guardar item em novo conjunto** e escolha o nível.
-3. Marque vários disquetes com Enter ou clique e use **Confirmar**. Use Disk Drives conectados ao computador; para mais drives, uma [rede de modems com fio](https://tweaked.cc/module/peripheral.html#referencing-peripherals) permite disponibilizar periféricos remotos.
-4. Confira IDs, espaço por disco e, no RAID 1+0, a ordem dos pares. Confirme e aguarde a verificação.
-5. Para recuperar, abra a pasta onde quer salvar e use **Abrir / recuperar conjunto → Restaurar nesta pasta**. Informe o nome de uma pasta nova.
-
-Os originais e outros arquivos dos disquetes são preservados. Cada conjunto fica em `.diskdesk-arrays/<identificador>/`, com índice repetido e um arquivo de blocos por membro. Blocos têm 1024 bytes; RAID 5 usa paridade XOR rotativa, RAID 6 usa paridades P/Q em GF(256), e RAID 1+0 distribui os dados entre pares espelhados. A implementação matemática de P/Q segue os princípios descritos em [The mathematics of RAID-6](https://www.kernel.org/pub/linux/kernel/people/hpa/raid6.pdf). O formato em disco é próprio e não é compatível com arrays Linux.
-
-**Ver discos / integridade** valida tamanho e checksum de cada membro. Um arquivo de blocos corrompido conta como um disco perdido. Havendo redundância suficiente, **Reconstruir disco perdido** grava o membro em um disquete substituto e verifica o resultado. O substituto precisa estar conectado e não pode conter esse mesmo conjunto. A identificação do novo membro fica nele; não depende da configuração do computador original.
-
-Mantenha os discos conectados até terminar. A criação prepara todos os membros antes de publicar. Se houver interrupção, podem restar diretórios `.partial` ou um conjunto incompleto; versões anteriores e originais permanecem intactos. Um conjunto incompleto só pode ser restaurado se houver membros suficientes. Não edite manualmente os índices ou blocos, e mantenha backups independentes dos dados importantes.
 
 ## Compactar e extrair
 
@@ -170,13 +124,13 @@ A extração valida caminhos, tamanho e checksum antes de publicar em uma **past
 
 ## Backup com versões
 
-É **backup versionado por arquivos, iniciado manualmente**, separado do espelhamento automático. Cada execução copia o estado atual do disco para uma versão nova e mantém as anteriores, permitindo recuperar arquivos apagados ou alterados depois.
+É um **backup versionado por arquivos, iniciado manualmente**. Cada execução pode copiar o estado atual do disco para vários destinos. Cada destino recebe uma cópia completa e independente, e mantém versões anteriores.
 
-1. Conecte **dois Disk Drives**, com um floppy em cada. Dê nomes como `Trabalho` e `Backup` com L.
+1. Conecte o disco de origem e de um a oito discos de destino. Dê nomes claros com L.
 2. Abra o disco `Trabalho` na barra lateral ou com D.
 3. Use **A → RAID e backup → Criar backup** ou pressione B.
-4. Escolha o disco `Backup`, confira os discos e confirme.
-5. Aguarde a cópia e a verificação. Mantenha os dois disquetes inseridos.
+4. Marque todos os discos de backup desejados, escolha **Confirmar**, confira os IDs e confirme.
+5. Aguarde todas as cópias e verificações. Mantenha a origem e todos os destinos inseridos.
 
 Inclui **todo o disquete selecionado**, mesmo se estiver em uma subpasta ou usando busca. Preserva estrutura, pastas vazias e conteúdo binário. Cada arquivo copiado é relido e comparado por tamanho e checksum Adler-32. O histórico `.diskdesk-backups` não é incluído em novos backups.
 

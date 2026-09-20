@@ -6,6 +6,8 @@ local volumeFactory=dofile(fs.combine(fs.getDir(shell.getRunningProgram()),'disk
 local virtual=volumeFactory(services,dofile(fs.combine(fs.getDir(shell.getRunningProgram()),'diskdesk_arrays.lua')))
 local fs=virtual.fs
 services.useFilesystem(fs)
+-- Migrate away from the removed automatic RAID 1 feature without deleting its copies.
+pcall(function() if services.raidStatus().enabled then services.raidDisable() end end)
 local sources, source, folder = {}, 1, ''
 local entries, selected, scroll = {}, 1, 0
 local clipboard, job
@@ -19,13 +21,6 @@ local deviceCount = {printer = 0, speaker = 0, modem = 0}
 local theme = {bg = colors.black, panel = colors.gray, accent = colors.cyan,
   text = colors.white, muted = colors.lightGray, select = colors.blue}
 local lastClick
-local raidLabel = 'Desativado'
-local raidShort = 'Desativado'
-local arrayService, knownArrays = nil, {}
-local function getArrays()
-  if not arrayService then arrayService=dofile(fs.combine(fs.getDir(shell.getRunningProgram()),'diskdesk_arrays.lua'))(services) end
-  return arrayService
-end
 local function fit(text, width)
   text = tostring(text)
   if #text > width then return width < 3 and text:sub(1, width) or text:sub(1, width - 2) .. '..' end
@@ -185,10 +180,7 @@ local function draw()
         i==source and theme.select or theme.panel)
       buttons[#buttons+1]={x=1,last=sidebar,y=y,action='source:'..i}
     end
-    if H>=13 then
-      put(2,H-5,sidebar-2,'RAID: '..raidShort,theme.panel,theme.muted)
-      put(2,H-4,sidebar-2,muted and 'SOM: mudo' or (deviceCount.speaker>0 and 'SOM: ligado' or 'Sem Speaker'),theme.panel,theme.muted)
-    end
+    if H>=13 then put(2,H-4,sidebar-2,muted and 'SOM: mudo' or (deviceCount.speaker>0 and 'SOM: ligado' or 'Sem Speaker'),theme.panel,theme.muted) end
   end
   put(listX,3,listWidth,filter~='' and ('Busca: '..filter) or ('ARQUIVOS / '..#entries..' itens'),theme.bg,theme.accent)
   put(listX,4,listWidth,' NOME',theme.panel,theme.muted)
@@ -209,7 +201,7 @@ local function draw()
     put(listX,5,listWidth,filter~='' and 'Nenhum resultado.' or 'Esta pasta esta vazia.',theme.bg,theme.muted)
     put(listX,6,listWidth,filter~='' and 'F1: limpar busca' or 'N: pasta | T: texto',theme.bg,theme.muted)
   end
-  line(H-3,' '..#entries..' itens | RAID: '..raidLabel,theme.panel,theme.muted)
+  line(H-3,' '..#entries..' itens',theme.panel,theme.muted)
   line(H-2,clipboard and ((clipboard.move and ' Mover: ' or ' Copiar: ')..clipboard.name..' | V: colar') or status,theme.bg,colors.yellow)
   local free,capacity=fs.getFreeSpace(path()),fs.getCapacity(path())
   local percent=type(free)=='number' and type(capacity)=='number' and capacity>0
@@ -456,15 +448,22 @@ local function pickDisk(title, exclude, excludedIDs)
   local index = choose(title, labels)
   if index then services.guard(volumes[index]); return volumes[index] end
 end
+local selectDisks
 local function backupDisk()
   if not current().drive then error('Abra o disquete de origem antes de fazer backup.', 0) end
   local src = services.capture(current().drive)
-  local dest = pickDisk('Disco para guardar o backup', src)
-  if not dest then return end
-  if not confirm('Backup de ' .. src.name .. ' (#' .. src.id .. ') para ' .. dest.name .. ' (#' .. dest.id .. ')? Versoes anteriores serao preservadas.') then return end
-  local result = services.backup(src, dest, progress('Backup'))
-  status = 'Backup verificado e salvo.'
-  show({'Backup concluido e verificado.', '', result, '', 'O: Restaurar para recuperar arquivos.', 'Versoes antigas nao foram apagadas.'}, ' Backup concluido')
+  local destinations=selectDisks('Marque os discos de BACKUP',1,8,{[src.id]=true})
+  if not destinations then return end
+  local ids={}; for _,dest in ipairs(destinations) do ids[#ids+1]='#'..dest.id end
+  if not confirm('Criar a mesma versao do backup de #'..src.id..' nos discos '..table.concat(ids,', ')..'? Backups anteriores serao preservados.') then return end
+  local paths=services.backupMany(src,destinations,progress('Backup RAID 1'))
+  local results={}; for i,dest in ipairs(destinations) do results[i]='#'..dest.id..': '..paths[i] end
+  status='Backup verificado em '..#destinations..' disco(s).'
+  local lines={'Backup concluido e verificado em todos os destinos.',''}
+  for _,result in ipairs(results) do lines[#lines+1]=result end
+  lines[#lines+1]=''; lines[#lines+1]='Cada disco possui uma copia restauravel independente.'
+  lines[#lines+1]='Versoes antigas nao foram apagadas.'
+  show(lines,' Backup concluido')
 end
 local function restoreDisk()
   if not current().drive then error('Abra o disquete que guarda os backups.', 0) end
@@ -511,54 +510,7 @@ local function receiveWireless()
   end, update)
   status = result and ('Recebido: ' .. fs.getName(result)) or 'Recebimento recusado.'
 end
-local function syncRaid()
-  local ok,result=pcall(services.raidSync)
-  if not ok and tostring(result)=='Terminated' then error(result,0) end
-  raidLabel=ok and result or 'Pendente'
-  raidShort=raidLabel
-  if not ok then status='RAID pendente: '..tostring(result) end
-  local checked,why=pcall(function()
-    local arrays=getArrays()
-    for _,m in ipairs(arrays.list()) do knownArrays[m.id]=m end
-    local count,chosen,severity=0,nil,-1
-    for _,m in pairs(knownArrays) do
-      count=count+1
-      local state=arrays.status(m)
-      local rank=not state.readable and 2 or (#state.missing>0 and 1 or 0)
-      if rank>severity or (rank==severity and m.id>chosen.id) then
-        severity=rank; chosen={id=m.id,mode=m.mode,n=m.n,state=state}
-      end
-    end
-    if chosen then
-      local mode=chosen.mode=='10' and '1+0' or chosen.mode
-      local label=severity==0 and 'Ativo' or (severity==1 and 'Degradado' or 'Indisponivel')
-      raidShort=mode..' '..label
-      local auto=raidLabel~='Desativado' and (' / R1 auto: '..raidLabel) or ''
-      raidLabel=raidShort..' ('..(chosen.n-#chosen.state.missing)..'/'..chosen.n..')'..
-        (count>1 and (' +'..(count-1)..' conj.') or '')..auto
-    end
-    local volumes=virtual.list()
-    if #volumes>0 then
-      local worst,priority=nil,-1
-      for _,volume in ipairs(volumes) do
-        local state=virtual.info(volume)
-        local level=not state.readable and 2 or (state.writable and 0 or 1)
-        if level>priority then worst={volume=volume,state=state}; priority=level end
-      end
-      local volume,state=worst.volume,worst.state
-      raidShort=(volume.mode=='10' and '1+0' or volume.mode)..' '..state.text
-      raidLabel=raidShort..' ('..(#volume.members-#state.missing)..'/'..#volume.members..') unidade'..
-        (#volumes>1 and (' +'..(#volumes-1)) or '')
-    end
-    local note=virtual.notice(); if note then status=note end
-  end)
-  if not checked then
-    if tostring(why)=='Terminated' then error(why,0) end
-    raidShort='Verificar'; raidLabel='Falha ao verificar conjuntos'
-    status='RAID: '..tostring(why)
-  end
-end
-local function selectDisks(title,minimum,maximum,excluded,even)
+selectDisks=function(title,minimum,maximum,excluded,even)
   scan()
   local units,checked={},{}
   for _,unit in ipairs(sources) do
@@ -590,122 +542,8 @@ local function selectDisks(title,minimum,maximum,excluded,even)
     else checked[selected-1]=not checked[selected-1] end
   end
 end
-local function raidMenu()
-  while true do
-    local state=services.raidStatus()
-    local labels=state.enabled and {'Sincronizar agora','Ver estado dos discos','Desativar espelhamento'} or {'Configurar RAID 1','Como funciona'}
-    local selectedAction=choose('RAID 1 / '..state.text,labels)
-    if not selectedAction then return end
-    if not state.enabled and selectedAction==1 then
-      local selectedMode=choose('Modo de espelhamento',{'RAID 1: direto na raiz','RAID 1: pasta RAID1','RAID 1: varios espelhos (raiz)'})
-      if not selectedMode then return end
-      local occupied={}
-      for _,volume in ipairs(virtual.list()) do for _,id in ipairs(volume.members) do occupied[id]=true end end
-      local primary=pickDisk('Escolha o disco PRINCIPAL',nil,occupied)
-      if not primary then return end
-      occupied[primary.id]=true
-      local mirrors=selectDisks('Marque os ESPELHOS',1,selectedMode==3 and 8 or 1,occupied)
-      if not mirrors then return end
-      local mode=selectedMode==2 and 'folder' or 'root'
-      local ids={}; for _,unit in ipairs(mirrors) do ids[#ids+1]='#'..unit.id end
-      local warning=mode=='root' and 'Copiar tudo para a RAIZ. Arquivos extras dos destinos serao removidos.' or 'Copiar para a pasta RAID1 dos destinos.'
-      if confirm('Principal #'..primary.id..' -> '..table.concat(ids,', ')..'. '..warning..' Ativar?') then
-        services.raidConfigure(primary,mirrors,mode)
-        raidLabel=services.raidSync(progress('RAID 1'))
-        status='RAID 1 ativado. Use o disco principal.'
-      end
-      return
-    elseif state.enabled and selectedAction==1 then
-      raidLabel=services.raidSync(progress('RAID 1')); status='RAID: '..raidLabel; return
-    elseif state.enabled and selectedAction==3 then
-      if confirm('Desativar RAID? Os arquivos do principal e da copia serao mantidos.') then
-        services.raidDisable(); raidLabel='Desativado'; status='RAID desativado. Copia preservada.'
-      end
-      return
-    else
-      show({'RAID 1 por arquivos, em uma direcao.',
-        state.enabled and ('Principal #'..state.primaryID..' / espelhos: '..table.concat(state.mirrorIDs,', ')) or 'Escolha os floppies pelo ID.',
-        'Estado: '..state.text,'',
-        'Modo: '..(state.mode=='root' and 'RAIZ (copia direta)' or 'pasta RAID1'),
-        'Sincroniza apos acoes e a cada 10s no explorador.',
-        'Sem um disco: estado Degradado.',
-        'Ao reinserir o mesmo disco: sincroniza de novo.',
-        'O espelho e protegido contra escrita pelo app.',
-        'Exclusoes do principal tambem sao replicadas.',
-        'Mantenha backups versionados para recuperacao.',
-        'Espaco: copia anterior + nova durante a troca.',
-        'Nao ha failover nem volume de blocos.',
-        'Principal perdido? Recupere usando um espelho.'},' RAID 1 - informacoes')
-    end
-  end
-end
-local function arrayMenu()
-  local arrays=getArrays()
-  local operation=choose('RAID 0 / 1 / 5 / 6 / 1+0',{'Guardar item em novo conjunto','Abrir / recuperar conjunto','Como funcionam os modos'})
-  if not operation then return end
-  if operation==3 then
-    show({'Conjuntos guardam uma versao do item selecionado.',
-      'Os blocos ficam em .diskdesk-arrays nos discos.',
-      'Nao monta uma unidade virtual do CraftOS.',
-      'RAID 0: 2+ discos, divide dados, sem redundancia.',
-      'RAID 1: 2+ discos, copia completa em cada um.',
-      'RAID 5: 3+ discos, suporta perder 1 disco.',
-      'RAID 6: 4+ discos, suporta perder 2 discos.',
-      'RAID 1+0: 4/6/8 discos, espelhos em pares.',
-      '1+0: deve restar um membro de cada par.',
-      'Restaurar valida e extrai para uma pasta nova.',
-      'Reconstruir grava membro perdido em outro floppy.',
-      'Para atualizar dados, guarde uma nova versao.',
-      'RAID 1 automatico continua no menu anterior.'},' Conjuntos RAID')
-    return
-  end
-  if operation==1 then
-    local item=requireItem()
-    local modeIndex=choose('Tipo do novo conjunto',{'RAID 0 - divisao, SEM redundancia','RAID 1 - espelhos completos','RAID 5 - paridade simples','RAID 6 - paridade dupla','RAID 1+0 - pares de espelhos'})
-    if not modeIndex then return end
-    local mode=({'0','1','5','6','10'})[modeIndex]
-    local minimum=({2,2,3,4,4})[modeIndex]
-    local units=selectDisks('Marque discos do RAID '..mode,minimum,8,nil,mode=='10')
-    if not units then return end
-    local update=progress('Preparando conjunto RAID')
-    update(0,1,'Compactando '..item.name)
-    local payload=services.archivePack(item.path,pathGuard(item.path))
-    local bytes=arrays.plan(#payload,mode,#units)
-    local ids={}; for _,unit in ipairs(units) do ids[#ids+1]='#'..unit.id end
-    local detail=mode=='10' and ' Pares na ordem: 1-2, 3-4, 5-6, 7-8.' or ''
-    if not confirm('Guardar '..item.name..' em RAID '..mode..' nos discos '..table.concat(ids,', ')..'? '..sizeLabel(bytes)..' de blocos por disco + indice.'..detail..(mode=='0' and ' Perder qualquer disco impede recuperar os dados.' or '')) then return end
-    local result=arrays.create(payload,item.name,mode,units,update)
-    status='Conjunto RAID '..mode..' verificado.'
-    show({'Conjunto: '..result.id,'RAID '..mode..' / '..#units..' discos','Conteudo: '..item.name,'Original preservado. Esta e uma versao fixa.','Para ler: RAID > Abrir / recuperar conjunto.'},' RAID salvo')
-  else
-    local sets=arrays.list(); if #sets==0 then error('Nenhum conjunto RAID encontrado nos discos conectados.',0) end
-    local labels={}; for i,m in ipairs(sets) do labels[i]='RAID '..m.mode..' '..m.name..' / '..m.id end
-    local index=choose('Conjuntos nos discos',labels); if not index then return end
-    local m=sets[index]; local state=arrays.status(m)
-    local task=choose('RAID '..m.mode..': '..state.text,{'Ver discos / integridade','Restaurar nesta pasta','Reconstruir disco perdido'})
-    if task==1 then
-      local lines={'Conjunto: '..m.id,'Estado: '..state.text,'Dados: '..sizeLabel(m.size),'Blocos por disco: '..sizeLabel(m.shardSize)}
-      for i=1,m.n do lines[#lines+1]='Posicao '..i..': '..(state.volumes[i] and ('OK / disco #'..state.volumes[i].id) or 'ausente ou corrompido') end
-      if m.mode=='10' then lines[#lines+1]='Pares: 1-2, 3-4, 5-6, 7-8 (se existirem).' end
-      show(lines,' Integridade do conjunto')
-    elseif task==2 then
-      local target=newName('Nome de uma NOVA pasta para restaurar:'); if not target then return end
-      arrays.restore(m,target,pathGuard(target),progress('Restaurar RAID'))
-      status='RAID restaurado em '..fs.getName(target)
-    elseif task==3 then
-      if not state.readable then error('Reconecte mais membros originais para recuperar.',0) end
-      if #state.missing==0 then status='Todos os membros estao integros.'; return end
-      local missing={}; for i,slot in ipairs(state.missing) do missing[i]='Reconstruir posicao '..slot end
-      local selectedSlot=choose('Membro perdido ou corrompido',missing); if not selectedSlot then return end
-      local dest=pickDisk('Disco SUBSTITUTO',nil,state.occupied); if not dest then return end
-      if not confirm('Reconstruir posicao '..state.missing[selectedSlot]..' no disco #'..dest.id..'? Outros arquivos serao preservados.') then return end
-      arrays.rebuild(m,state.missing[selectedSlot],dest,progress('Reconstruindo RAID'))
-      status='Membro RAID reconstruido e verificado.'
-    end
-  end
-end
 local function virtualMenu()
-  local operation=choose('Unidades RAID em tempo real',{'Criar unidade RAID','Gerenciar unidade RAID','Importar unidade dos discos','Como usar'})
+  local operation=choose('Unidades RAID em tempo real',{'Criar unidade RAID','Gerenciar unidade RAID','Excluir unidade RAID','Importar unidade dos discos','Como usar'})
   if not operation then return end
   if operation==1 then
     local modeIndex=choose('Tipo da unidade RAID',{'RAID 0 - soma / sem redundancia','RAID 1 - espelho','RAID 5 - paridade simples','RAID 6 - paridade dupla','RAID 1+0 - pares de espelhos'})
@@ -723,11 +561,20 @@ local function virtualMenu()
     scan()
     for i,unit in ipairs(sources) do if unit.key=='virtual:'..volume.id then switchSource(i); break end end
     status='Unidade criada. Use C/M e V para copiar/mover para ela.'
-  elseif operation==2 then
+  elseif operation==2 or operation==3 then
     local list=virtual.list(); if #list==0 then error('Crie ou importe uma unidade RAID primeiro.',0) end
     local labels={}; for i,volume in ipairs(list) do labels[i]='RAID '..volume.mode..' / '..volume.name end
     local index=choose('Unidade RAID',labels); if not index then return end
     local volume=list[index]; local state=virtual.info(volume)
+    if operation==3 then
+      if not state.writable then error('Conecte todos os membros antes de excluir a unidade.',0) end
+      if confirm('EXCLUIR a unidade '..volume.name..' e TODOS os arquivos RAID dela? Outros arquivos fisicos dos disquetes serao preservados.') then
+        virtual.delete(volume)
+        scan(); source,folder,selected,scroll,filter=1,'',1,0,''
+        status='Unidade RAID excluida dos discos e do computador.'
+      end
+      return
+    end
     local task=choose(volume.name..' / '..state.text,{'Ver capacidade e discos','Verificar arquivos / catalogo','Substituir membro ausente'})
     if task==1 then
       local lines={'RAID '..volume.mode..' - '..state.text,'Capacidade util: '..sizeLabel(state.capacity),
@@ -749,7 +596,7 @@ local function virtualMenu()
       local updated=virtual.rebuild(volume,state.missing[selectedSlot],dest,progress('Reconstruir unidade'))
       status=virtual.info(updated).writable and 'Unidade reconstruida. Pode gravar novamente.' or 'Membro reconstruido. Ainda faltam outros membros.'
     end
-  elseif operation==3 then
+  elseif operation==4 then
     local count=virtual.import(); status=count..' unidade(s) importada(s). Abra com D.'
   else
     show({'Crie a unidade e abra-a em D: unidades.',
@@ -793,7 +640,7 @@ local helpTopics={
     'Com membros ausentes, a unidade fica somente leitura se ainda houver redundancia. Reconstrua antes de gravar.',
     'Um arquivo alterado precisa de espaco para a versao nova antes de liberar a anterior. Falhas podem deixar blocos temporarios.',
     'Use Gerenciar para verificar ou reconstruir. Importar recupera o catalogo de uma unidade em outro computador.',
-    'Arquivos copiados para a raiz fisica dos floppies continuam fora da unidade. Conjuntos antigos sao arquivos de versoes, em menu separado.'}},
+    'Arquivos copiados para a raiz fisica dos floppies continuam fora da unidade. Use Excluir unidade para apagar seus dados internos.'}},
   {title='Primeiros passos',text={'D escolhe computador ou disquete. Clique na unidade da barra lateral para trocar.',
     'Clique seleciona; duplo clique ou Enter abre. Backspace volta uma pasta.',
     'A abre o menu por categorias. Botao direito mostra acoes do item.',
@@ -808,27 +655,18 @@ local helpTopics={
     'D abre o painel com barras de uso, espaco livre e capacidade de cada unidade. Capacidade indisponivel aparece como --.',
     'L muda o nome do floppy. J ejeta. Speaker conectado toca ao inserir e retirar; U silencia.',
     'Arquivos muito pequenos tambem ocupam espaco de armazenamento.'}},
-  {title='RAID 1 e backup',text={'A > RAID e backup reune configuracao, sincronizacao, backups e restauracao. I abre RAID diretamente.',
-    'Modos: copia na RAIZ, pasta RAID1 e varios espelhos na raiz. Configuracao e salva pelo ID dos discos.',
-    'RAIZ copia todos os arquivos e remove extras dos destinos. Confira os IDs antes de confirmar!',
-    'Espelhamento automatico ao retornar de acoes e a cada 10s no explorador. Durante editor/dialogos ele aguarda voce voltar.',
-    'Remocao de disco: Degradado. Recoloque o mesmo disco para reconstruir a copia. Nao ha failover automatico.',
-    'Exclusoes sao espelhadas! B cria backups com versoes; O restaura versoes antigas.',
-    'Para trocar a copia com seguranca, precisa caber a copia antiga e a nova no espelho.'}},
+  {title='Backup em varios discos',text={'B ou A > RAID e backup > Backup em varios discos.',
+    'Abra o disquete de origem, marque de 1 a 8 destinos e confirme.',
+    'Cada destino recebe uma copia completa, verificada e restauravel de forma independente.',
+    'Versoes anteriores permanecem nos destinos. O restaura uma versao para outro disquete.',
+    'O backup nao sincroniza exclusoes: isso permite recuperar versoes antigas.',
+    'Mantenha a origem e todos os destinos conectados ate concluir.'}},
   {title='Compactacao DDZ',text={'A > Compactar e extrair. Selecione um arquivo ou pasta e escolha Compactar.',
     'O pacote .ddz preserva subpastas, arquivos binarios e pastas vazias. Pode enviar esse pacote pelo wireless.',
     'Para abrir, selecione o pacote, escolha Extrair e informe o nome de uma pasta nova.',
     'DDZ2 usa indice binario pequeno e comprime nomes e conteudo juntos. Continua lendo os pacotes DDZ1 antigos.',
     'Formato proprio, nao e ZIP. Arquivos minusculos podem crescer por causa dos nomes e do indice.',
     'Limites: 512 KiB descompactados e 1024 itens. Arquivos corrompidos ou caminhos invalidos sao rejeitados.'}},
-  {title='RAID 0, 5, 6 e 1+0',text={'A > RAID e backup > Conjuntos RAID. Guarda uma versao fixa do arquivo ou pasta selecionado.',
-    'Marque varios discos com clique ou Enter e selecione Confirmar. Maximo de 8 discos por conjunto.',
-    'RAID 0: minimo 2 discos, divide dados sem redundancia. Todos precisam estar disponiveis para restaurar.',
-    'RAID 5: minimo 3 discos, recupera 1 disco perdido. RAID 6: minimo 4, recupera 2 perdidos.',
-    'RAID 1+0: 4, 6 ou 8 discos em pares. Pode perder um disco de cada par, nunca os dois do mesmo par.',
-    'Abrir / recuperar conjunto verifica membros e restaura numa pasta nova. Reconstruir grava um membro em outro floppy.',
-    'Conjuntos usam blocos em .diskdesk-arrays, nao sao unidades virtuais do CraftOS. Nao altere esses arquivos.',
-    'Cada conjunto e uma versao independente. O espelhamento RAID 1 automatico permanece no menu anterior.'}},
   {title='Rede wireless',text={'Instale DiskDesk e modem wireless nos dois computadores.',
     'No destino: abra a pasta e use G (Receber). Veja o ID na barra inferior.',
     'Na origem: selecione o arquivo, use S e digite o ID. Aceite a oferta no destino.',
@@ -894,7 +732,7 @@ local menus = {
   edit = {{'C  Copiar', 'c'}, {'M  Mover', 'm'}, {'V  Colar', 'v'}, {'R  Renomear', 'r'}, {'Delete  Excluir...', 'x'}, {'F  Buscar nesta pasta', 'f'}},
   disk = {{'Escolher unidade', 'd'}, {'Criar backup...', 'b'}, {'Restaurar backup...', 'o'}, {'Nome do disquete', 'l'}, {'Ejetar disquete', 'j'}},
   net = {{'Enviar arquivo...', 's'}, {'Receber arquivo...', 'g'}},
-  protect = {{'Unidades RAID em tempo real','virtual'}, {'Espelhamento automatico RAID 1','i'}, {'Conjuntos RAID (versoes arquivadas)','array'}, {'Criar backup com versoes','b'}, {'Restaurar backup','o'}},
+  protect = {{'Unidades RAID em tempo real','virtual'}, {'Backup em varios discos','b'}, {'Restaurar backup','o'}},
   archive = {{'Compactar arquivo ou pasta (.ddz)','z'}, {'Extrair pacote .ddz','y'}},
   start = {{'[+] Arquivos e organizacao', 'menu:files'}, {'[%] Armazenamento dos discos', 'd'}, {'[=] RAID e backup', 'menu:protect'}, {'[Z] Compactar e extrair', 'menu:archive'}, {'[~] Rede wireless', 'menu:net'}, {'[?] Central de ajuda', 'h'}, {'[x] Sair do DiskDesk', 'q'}},
   files = {{'Criar / editar / imprimir','menu:file'}, {'Copiar / mover / renomear','menu:edit'}, {'Nomear / ejetar disquete','menu:disk'}},
@@ -912,8 +750,7 @@ local function action(command)
   elseif command == 'a' then action('menu:start')
   elseif command == 'z' then archiveAction(false)
   elseif command == 'y' then archiveAction(true)
-  elseif command == 'i' then raidMenu()
-  elseif command == 'array' then arrayMenu()
+  elseif command == 'i' then virtualMenu()
   elseif command == 'virtual' then virtualMenu()
   elseif command == 'b' then backupDisk()
   elseif command == 'o' then restoreDisk()
@@ -992,7 +829,7 @@ local function action(command)
 end
 local function main()
   boot()
-  scan(); refresh(); syncRaid()
+  scan(); refresh()
   local raidTimer = os.startTimer(10)
   while running do
     draw()
@@ -1029,7 +866,7 @@ local function main()
       if command then action(command) end
       scan(); refresh()
       if running and (command or event=='disk' or event=='disk_eject' or event=='peripheral' or event=='peripheral_detach' or (event=='timer' and a==raidTimer)) then
-        syncRaid()
+        local note=virtual.notice(); if note then status=note end
         os.cancelTimer(raidTimer); raidTimer=os.startTimer(10)
       end
     end)

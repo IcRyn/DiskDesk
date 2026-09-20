@@ -675,6 +675,22 @@ local function varint(n)
   repeat local b=n%128; n=math.floor(n/128); out[#out+1]=string.char(b+(n>0 and 128 or 0)) until n==0
   return table.concat(out)
 end
+function M.backupMany(src,destinations,progress)
+  if type(destinations)~='table' or #destinations<1 or #destinations>8 then fail('Escolha de 1 a 8 discos de backup.') end
+  local seen={[src.id]=true}
+  for _,dest in ipairs(destinations) do
+    M.guard(dest)
+    if seen[dest.id] then fail('Origem e destinos precisam ser discos diferentes.') end
+    seen[dest.id]=true
+  end
+  local results={}
+  for i,dest in ipairs(destinations) do
+    results[i]=M.backup(src,dest,function(done,total,name)
+      if progress then progress(done,total,'Disco '..i..'/'..#destinations..': '..name) end
+    end)
+  end
+  return results
+end
 local function numberReader(data)
   local pos=1
   local function take(n)
