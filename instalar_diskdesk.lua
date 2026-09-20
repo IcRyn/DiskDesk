@@ -954,6 +954,8 @@ if not ok then print(err) else print('DiskDesk encerrado.') end
 diskdesk_services.lua]=], contents=[=[
 -- DiskDesk 3: verified, versioned backups and acknowledged wireless transfers.
 local M = {protocol = 'diskdesk.transfer.v1', maxFile = 1024 * 1024, chunkSize = 8192}
+local fs=fs
+function M.useFilesystem(filesystem) fs=filesystem end
 local serial, receipts, opened = 0, {}, {}
 local function fail(message) error(message, 0) end
 local function token()
@@ -1777,8 +1779,8 @@ return M
 diskdesk_arrays.lua]=], contents=[=[
 -- Immutable archive sets with striped blocks, rotating P/Q parity and paired mirrors.
 -- Format is DiskDesk-specific, not a CraftOS filesystem mount or Linux RAID format.
-return function(S)
-local A={}; local base='.diskdesk-arrays'; local block=1024; local limit=640*1024+32
+return function(S,storageBase)
+local A={}; local base=storageBase or '.diskdesk-arrays'; local block=1024; local limit=storageBase and 8*1024*1024 or 640*1024+32
 local serial=0
 local function fail(s) error(s,0) end
 local function yield() if sleep then sleep(0) end end
@@ -2056,6 +2058,21 @@ function A.rebuild(m,slot,dest,progress)
   write(stage..'/member',slot..':'..dest.id,guard)
   guard(); fs.move(stage,path)
   return dest
+end
+function A.readData(m,progress)
+  local shards,volumes=gather(m)
+  local payload=decode(m,shards,progress)
+  for _,volume in pairs(volumes) do S.guard(volume) end
+  return payload
+end
+function A.removeData(m,volumes)
+  valid(m)
+  for _,volume in ipairs(volumes) do
+    S.guard(volume)
+    local path=root(volume,m.id)
+    if fs.exists(path) then fs.delete(path) end
+    if fs.exists(path..'.partial') then fs.delete(path..'.partial') end
+  end
 end
 return A
 end
