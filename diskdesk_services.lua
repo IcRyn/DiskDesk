@@ -1,5 +1,7 @@
 -- DiskDesk 3: verified, versioned backups and acknowledged wireless transfers.
 local M = {protocol = 'diskdesk.transfer.v1', maxFile = 1024 * 1024, chunkSize = 8192}
+local fs=fs
+function M.useFilesystem(filesystem) fs=filesystem end
 local serial, receipts, opened = 0, {}, {}
 local function fail(message) error(message, 0) end
 local function token()
