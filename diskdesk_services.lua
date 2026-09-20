@@ -618,7 +618,7 @@ function M.moveItem(source,target,guard)
   guard(); fs.delete(source)
   return target
 end
--- DDZ: bounded LZW or raw blocks, a readable manifest, and binary payloads.
+-- DDZ2: compact binary tree and whole-body LZW; DDZ1 remains readable.
 local archiveLimit=512*1024
 local function lzwEncode(text)
   if #text==0 then return '' end
@@ -668,12 +668,32 @@ local function writeVerified(path,data,guard)
   guard(); local size,hash=hashFile(path,guard)
   if size~=#data or hash~=M.checksum(data) then fail('Falha ao verificar arquivo gravado.') end
 end
-function M.compress(source,target,guard)
+local function varint(n)
+  local out={}
+  repeat local b=n%128; n=math.floor(n/128); out[#out+1]=string.char(b+(n>0 and 128 or 0)) until n==0
+  return table.concat(out)
+end
+local function numberReader(data)
+  local pos=1
+  local function take(n)
+    if n<0 or pos+n-1>#data then fail('Pacote DDZ incompleto.') end
+    local value=data:sub(pos,pos+n-1); pos=pos+n; return value
+  end
+  local function number()
+    local result,mult=0,1
+    for _=1,5 do
+      local b=take(1):byte(); result=result+(b%128)*mult
+      if b<128 then return result end
+      mult=mult*128
+    end
+    fail('Numero DDZ invalido.')
+  end
+  return take,number,function() return pos end
+end
+function M.archivePack(source,guard)
   guard=guard or function() end
-  guard(); M.assertWritable(target)
+  guard()
   if fs.isDriveRoot(source) then fail('Selecione um arquivo ou pasta dentro da unidade.') end
-  if fs.exists(target) or fs.exists(target..'.partial') then fail('Destino ja existe.') end
-  if target==source or target:sub(1,#source+1)==source..'/' then fail('Salve o pacote fora da pasta de origem.') end
   local name=fs.getName(source)
   if not M.safeName(name) then fail('Nome invalido para o pacote.') end
   local entries,total
@@ -683,37 +703,81 @@ function M.compress(source,target,guard)
     table.insert(entries,1,{path=name,dir=true})
   else entries={{path=name,dir=false}}; total=fs.getSize(source) end
   if total>archiveLimit or #entries>1024 then fail('Limite DDZ: 512 KiB originais e 1024 itens.') end
-  local blocks,actualTotal={},0
-  for _,entry in ipairs(entries) do
+  local blocks,actualTotal,parents={varint(#entries)},0,{['']=0}
+  for i,entry in ipairs(entries) do
     guard()
+    if not safeRelative(entry.path) then fail('Caminho muito longo ou invalido para DDZ.') end
+    local parent=parents[fs.getDir(entry.path)]
+    if not parent then fail('Pasta pai ausente.') end
+    local basename=fs.getName(entry.path)
+    blocks[#blocks+1]=varint(parent)..varint(#basename)..basename..string.char(entry.dir and 0 or 1)
+    if entry.dir then parents[entry.path]=i end
     if not entry.dir then
       local path=fs.combine(fs.getDir(source),entry.path)
       local raw=readBounded(path,archiveLimit-actualTotal)
       actualTotal=actualTotal+#raw
-      local compressed=lzwEncode(raw)
-      entry.codec=#compressed<#raw and 'lzw' or 'raw'
-      local data=entry.codec=='lzw' and compressed or raw
-      entry.size,entry.hash,entry.packed=#raw,M.checksum(raw),#data
-      blocks[#blocks+1]=data
+      blocks[#blocks+1]=varint(#raw)..raw
     end
   end
-  local header=textutils.serialize({version=1,entries=entries})
-  if #header>128*1024 then fail('Indice DDZ muito grande.') end
-  local payload='DDZ1\n'..#header..'\n'..header..table.concat(blocks)
+  local body=table.concat(blocks)
+  if #body-actualTotal>128*1024 then fail('Indice DDZ muito grande.') end
+  local packed=lzwEncode(body)
+  local useLzw=#packed<#body
+  local hash=M.checksum(body)
+  local hashBytes={}; for _=1,4 do hashBytes[#hashBytes+1]=string.char(hash%256); hash=math.floor(hash/256) end
+  return 'DDZ2'..string.char(useLzw and 1 or 0)..varint(#body)..table.concat(hashBytes)..(useLzw and packed or body),actualTotal
+end
+function M.compress(source,target,guard)
+  guard=guard or function() end
+  guard(); M.assertWritable(target)
+  if fs.exists(target) or fs.exists(target..'.partial') then fail('Destino ja existe.') end
+  if target==source or target:sub(1,#source+1)==source..'/' then fail('Salve o pacote fora da pasta de origem.') end
+  local payload,actualTotal=M.archivePack(source,guard)
   guard(); room(fs.getDir(target),#payload+1024)
   writeVerified(target..'.partial',payload,guard)
   guard(); fs.move(target..'.partial',target)
   return actualTotal,#payload
 end
-function M.extract(source,target,guard)
+function M.archiveExtract(data,target,guard)
   guard=guard or function() end
   guard(); M.assertWritable(target)
   if fs.exists(target) or fs.exists(target..'.partial') then fail('Escolha uma pasta nova para extrair.') end
-  local data=readBounded(source,archiveLimit+128*1024+32)
-  local length,position=data:match('^DDZ1\n(%d+)\n()')
-  length=tonumber(length)
-  if not length or length>128*1024 or position+length-1>#data then fail('Cabecalho DDZ invalido.') end
-  local manifest=textutils.unserialize(data:sub(position,position+length-1)); position=position+length
+  if #data>archiveLimit+128*1024+32 then fail('Pacote DDZ muito grande.') end
+  local manifest,position
+  if data:sub(1,4)=='DDZ2' then
+    local take,num,pos=numberReader(data:sub(5))
+    local codec=take(1):byte(); local length=num(); local hash=0
+    for i=0,3 do hash=hash+take(1):byte()*256^i end
+    if length>archiveLimit+128*1024 then fail('DDZ excede limite.') end
+    local body=data:sub(4+pos())
+    if codec==1 then body=lzwDecode(body,length)
+    elseif codec~=0 then fail('Codec DDZ desconhecido.') end
+    if #body~=length or M.checksum(body)~=hash then fail('Pacote DDZ corrompido.') end
+    take,num,pos=numberReader(body)
+    local count=num(); if count>1024 then fail('Muitos itens DDZ.') end
+    manifest={version=1,entries={}}; local blocks={}; local total=0
+    for i=1,count do
+      local parent=num(); local nameLength=num()
+      if parent>=i or nameLength>128 then fail('Indice DDZ invalido.') end
+      local name=take(nameLength); if not M.safeName(name) then fail('Nome DDZ invalido.') end
+      local base=parent==0 and '' or manifest.entries[parent]
+      if parent~=0 and (not base or not base.dir) then fail('Pasta DDZ invalida.') end
+      local flag=take(1):byte(); if flag>1 then fail('Tipo DDZ invalido.') end
+      local entry={path=parent==0 and name or fs.combine(base.path,name),dir=flag==0}
+      if not entry.dir then
+        local size=num(); total=total+size; if total>archiveLimit then fail('DDZ excede limite.') end
+        local block=take(size); blocks[#blocks+1]=block
+        entry.size,entry.packed,entry.hash,entry.codec=size,size,M.checksum(block),'raw'
+      end
+      manifest.entries[i]=entry
+    end
+    if pos()~=#body+1 then fail('Dados extras no pacote DDZ.') end
+    data=table.concat(blocks); position=1
+  else
+    local length; length,position=data:match('^DDZ1\n(%d+)\n()'); length=tonumber(length)
+    if not length or length>128*1024 or position+length-1>#data then fail('Cabecalho DDZ invalido.') end
+    manifest=textutils.unserialize(data:sub(position,position+length-1)); position=position+length
+  end
   if type(manifest)~='table' or manifest.version~=1 or type(manifest.entries)~='table' or #manifest.entries>1024 then fail('Indice DDZ invalido.') end
   local files,seen,total={},{},0
   for _,entry in ipairs(manifest.entries) do
@@ -749,5 +813,8 @@ function M.extract(source,target,guard)
   end
   guard(); fs.move(stage,target)
   return target
+end
+function M.extract(source,target,guard)
+  return M.archiveExtract(readBounded(source,archiveLimit+128*1024+32),target,guard)
 end
 return M

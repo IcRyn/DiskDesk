@@ -49,15 +49,18 @@ local function choose(title, items, initial, bottom)
     if bottom then y = H - rows - 2 end
     offset = math.max(0, math.min(offset, selectedOption - 1))
     if selectedOption > offset + rows then offset = selectedOption - rows end
-    put(x + 1, y + 1, width, string.rep(' ', width), colors.gray)
-    put(x, y, width, ' ' .. title, colors.blue, colors.white)
+    put(x-1,y,width+2,'+'..fit(' '..title..' ',width):gsub(' +$',function(s) return string.rep('-',#s) end)..'+',theme.bg,theme.accent)
     for row = 1, rows do
       local i = offset + row
       put(x, y + row, width, (i == selectedOption and ' > ' or '   ') .. items[i],
         i == selectedOption and theme.select or theme.panel, theme.text)
-      put(x + width, y + row, 1, ' ', colors.gray)
+      put(x-1,y+row,1,'|',theme.bg,theme.accent)
+      put(x+width,y+row,1,'|',theme.bg,theme.accent)
     end
     put(x, y + rows + 1, width, ' [Voltar] F1  |  Enter: escolher', theme.panel, theme.muted)
+    put(x-1,y+rows+1,1,'|',theme.bg,theme.accent)
+    put(x+width,y+rows+1,1,'|',theme.bg,theme.accent)
+    put(x-1,y+rows+2,width+2,'+'..string.rep('-',width)..'+',theme.bg,theme.accent)
     local event, a, b, c = os.pullEvent()
     if event == 'key' then
       if a == keys.escape or a == keys.f1 or a == keys.backspace then return nil end
@@ -397,7 +400,7 @@ local function progress(title)
     local filled = math.floor(width * fraction)
     if filled > 0 then put(3, H-4, filled, string.rep(' ', filled), colors.blue) end
     line(H-2, '  ' .. math.floor(fraction * 100) .. '%  |  ' .. done .. ' / ' .. total, theme.panel)
-    line(H, (title == 'Backup' or title == 'Restaurar') and ' Mantenha os dois discos inseridos.' or ' F1: voltar | mantenha o modem conectado.', theme.panel)
+    line(H, (title=='Enviar' or title=='Receber') and ' F1: voltar | mantenha o modem conectado.' or ' Mantenha os discos conectados ate terminar.', theme.panel)
   end
 end
 local function pickDisk(title, exclude, excludedIDs)
@@ -476,10 +479,42 @@ local function syncRaid()
   raidLabel=ok and result or 'Pendente'
   if not ok then status='RAID pendente: '..tostring(result) end
 end
+local function selectDisks(title,minimum,maximum,excluded,even)
+  scan()
+  local units,checked={},{}
+  for _,unit in ipairs(sources) do
+    if unit.drive then
+      local volume=services.capture(unit.drive)
+      if not excluded or not excluded[volume.id] then units[#units+1]=volume end
+    end
+  end
+  if #units<minimum then error('Conecte ao menos '..minimum..' disquetes disponiveis.',0) end
+  local cursor=2
+  while true do
+    local chosen,labels={},{}
+    for i,unit in ipairs(units) do if checked[i] then chosen[#chosen+1]=unit end end
+    labels[1]='Confirmar '..#chosen..' discos (min '..minimum..')'
+    for i,unit in ipairs(units) do
+      labels[i+1]=(checked[i] and '[x] ' or '[ ] ')..'#'..unit.id..' '..unit.name..' '..sizeLabel(fs.getFreeSpace(unit.root))..' livre'
+    end
+    local selected=choose(title,labels,cursor)
+    if not selected then return end
+    cursor=selected
+    if selected==1 then
+      if #chosen>=minimum and #chosen<=maximum and (not even or #chosen%2==0) then
+        for _,unit in ipairs(chosen) do services.guard(unit) end
+        return chosen
+      end
+      show({'Escolha de '..minimum..' a '..maximum..' discos.',even and 'RAID 1+0 exige uma quantidade par.' or 'Marque os discos com Enter ou clique.'},' Selecao de discos')
+    elseif not checked[selected-1] and #chosen>=maximum then
+      show({'Maximo de '..maximum..' discos.'},' Selecao de discos')
+    else checked[selected-1]=not checked[selected-1] end
+  end
+end
 local function raidMenu()
   while true do
     local state=services.raidStatus()
-    local labels=state.enabled and {'Sincronizar agora','Ver estado do par','Desativar espelhamento'} or {'Configurar RAID 1','Como funciona'}
+    local labels=state.enabled and {'Sincronizar agora','Ver estado dos discos','Desativar espelhamento'} or {'Configurar RAID 1','Como funciona'}
     local selectedAction=choose('RAID 1 / '..state.text,labels)
     if not selectedAction then return end
     if not state.enabled and selectedAction==1 then
@@ -487,19 +522,8 @@ local function raidMenu()
       if not selectedMode then return end
       local primary=pickDisk('Escolha o disco PRINCIPAL')
       if not primary then return end
-      local mirror=pickDisk('Escolha o disco ESPELHO',primary)
-      if not mirror then return end
-      local mirrors={mirror}; local used={[primary.id]=true,[mirror.id]=true}
-      if selectedMode==3 then
-        while #mirrors<8 do
-          local available=false
-          for _,unit in ipairs(sources) do if unit.drive and not used[disk.getID(unit.drive)] then available=true end end
-          if not available or not confirm('Adicionar mais um disquete como espelho?') then break end
-          local extra=pickDisk('Escolha outro ESPELHO',primary,used)
-          if not extra then break end
-          mirrors[#mirrors+1]=extra; used[extra.id]=true
-        end
-      end
+      local mirrors=selectDisks('Marque os ESPELHOS',1,selectedMode==3 and 8 or 1,{[primary.id]=true})
+      if not mirrors then return end
       local mode=selectedMode==2 and 'folder' or 'root'
       local ids={}; for _,unit in ipairs(mirrors) do ids[#ids+1]='#'..unit.id end
       local warning=mode=='root' and 'Copiar tudo para a RAIZ. Arquivos extras dos destinos serao removidos.' or 'Copiar para a pasta RAID1 dos destinos.'
@@ -533,6 +557,71 @@ local function raidMenu()
     end
   end
 end
+local function arrayMenu()
+  local arrays=dofile(fs.combine(fs.getDir(shell.getRunningProgram()),'diskdesk_arrays.lua'))(services)
+  local operation=choose('RAID 0 / 1 / 5 / 6 / 1+0',{'Guardar item em novo conjunto','Abrir / recuperar conjunto','Como funcionam os modos'})
+  if not operation then return end
+  if operation==3 then
+    show({'Conjuntos guardam uma versao do item selecionado.',
+      'Os blocos ficam em .diskdesk-arrays nos discos.',
+      'Nao monta uma unidade virtual do CraftOS.',
+      'RAID 0: 2+ discos, divide dados, sem redundancia.',
+      'RAID 1: 2+ discos, copia completa em cada um.',
+      'RAID 5: 3+ discos, suporta perder 1 disco.',
+      'RAID 6: 4+ discos, suporta perder 2 discos.',
+      'RAID 1+0: 4/6/8 discos, espelhos em pares.',
+      '1+0: deve restar um membro de cada par.',
+      'Restaurar valida e extrai para uma pasta nova.',
+      'Reconstruir grava membro perdido em outro floppy.',
+      'Para atualizar dados, guarde uma nova versao.',
+      'RAID 1 automatico continua no menu anterior.'},' Conjuntos RAID')
+    return
+  end
+  if operation==1 then
+    local item=requireItem()
+    local modeIndex=choose('Tipo do novo conjunto',{'RAID 0 - divisao, SEM redundancia','RAID 1 - espelhos completos','RAID 5 - paridade simples','RAID 6 - paridade dupla','RAID 1+0 - pares de espelhos'})
+    if not modeIndex then return end
+    local mode=({'0','1','5','6','10'})[modeIndex]
+    local minimum=({2,2,3,4,4})[modeIndex]
+    local units=selectDisks('Marque discos do RAID '..mode,minimum,8,nil,mode=='10')
+    if not units then return end
+    local update=progress('Preparando conjunto RAID')
+    update(0,1,'Compactando '..item.name)
+    local payload=services.archivePack(item.path,pathGuard(item.path))
+    local bytes=arrays.plan(#payload,mode,#units)
+    local ids={}; for _,unit in ipairs(units) do ids[#ids+1]='#'..unit.id end
+    local detail=mode=='10' and ' Pares na ordem: 1-2, 3-4, 5-6, 7-8.' or ''
+    if not confirm('Guardar '..item.name..' em RAID '..mode..' nos discos '..table.concat(ids,', ')..'? '..sizeLabel(bytes)..' de blocos por disco + indice.'..detail..(mode=='0' and ' Perder qualquer disco impede recuperar os dados.' or '')) then return end
+    local result=arrays.create(payload,item.name,mode,units,update)
+    status='Conjunto RAID '..mode..' verificado.'
+    show({'Conjunto: '..result.id,'RAID '..mode..' / '..#units..' discos','Conteudo: '..item.name,'Original preservado. Esta e uma versao fixa.','Para ler: RAID > Abrir / recuperar conjunto.'},' RAID salvo')
+  else
+    local sets=arrays.list(); if #sets==0 then error('Nenhum conjunto RAID encontrado nos discos conectados.',0) end
+    local labels={}; for i,m in ipairs(sets) do labels[i]='RAID '..m.mode..' '..m.name..' / '..m.id end
+    local index=choose('Conjuntos nos discos',labels); if not index then return end
+    local m=sets[index]; local state=arrays.status(m)
+    local task=choose('RAID '..m.mode..': '..state.text,{'Ver discos / integridade','Restaurar nesta pasta','Reconstruir disco perdido'})
+    if task==1 then
+      local lines={'Conjunto: '..m.id,'Estado: '..state.text,'Dados: '..sizeLabel(m.size),'Blocos por disco: '..sizeLabel(m.shardSize)}
+      for i=1,m.n do lines[#lines+1]='Posicao '..i..': '..(state.volumes[i] and ('OK / disco #'..state.volumes[i].id) or 'ausente ou corrompido') end
+      if m.mode=='10' then lines[#lines+1]='Pares: 1-2, 3-4, 5-6, 7-8 (se existirem).' end
+      show(lines,' Integridade do conjunto')
+    elseif task==2 then
+      local target=newName('Nome de uma NOVA pasta para restaurar:'); if not target then return end
+      arrays.restore(m,target,pathGuard(target),progress('Restaurar RAID'))
+      status='RAID restaurado em '..fs.getName(target)
+    elseif task==3 then
+      if not state.readable then error('Reconecte mais membros originais para recuperar.',0) end
+      if #state.missing==0 then status='Todos os membros estao integros.'; return end
+      local missing={}; for i,slot in ipairs(state.missing) do missing[i]='Reconstruir posicao '..slot end
+      local selectedSlot=choose('Membro perdido ou corrompido',missing); if not selectedSlot then return end
+      local dest=pickDisk('Disco SUBSTITUTO',nil,state.occupied); if not dest then return end
+      if not confirm('Reconstruir posicao '..state.missing[selectedSlot]..' no disco #'..dest.id..'? Outros arquivos serao preservados.') then return end
+      arrays.rebuild(m,state.missing[selectedSlot],dest,progress('Reconstruindo RAID'))
+      status='Membro RAID reconstruido e verificado.'
+    end
+  end
+end
 local function archiveAction(extract)
   local item=requireItem()
   if extract and item.dir then error('Selecione um pacote .ddz.',0) end
@@ -545,7 +634,7 @@ local function archiveAction(extract)
     services.extract(item.path,target,guard); status='Extraido em: '..fs.getName(target)
   else
     local original,packed=services.compress(item.path,target,guard)
-    status='Pacote: '..sizeLabel(original)..' -> '..sizeLabel(packed)
+    status='Pacote: '..sizeLabel(original)..' -> '..sizeLabel(packed)..(packed>=original and ' (inclui nomes/indice)' or (' (-'..math.floor((1-packed/original)*100)..'%)'))
   end
   filter=''
 end
@@ -574,8 +663,17 @@ local helpTopics={
   {title='Compactacao DDZ',text={'A > Compactar e extrair. Selecione um arquivo ou pasta e escolha Compactar.',
     'O pacote .ddz preserva subpastas, arquivos binarios e pastas vazias. Pode enviar esse pacote pelo wireless.',
     'Para abrir, selecione o pacote, escolha Extrair e informe o nome de uma pasta nova.',
-    'Formato proprio do DiskDesk, nao e ZIP. Compressao LZW quando diminui o arquivo; senao conserva o bloco original.',
+    'DDZ2 usa indice binario pequeno e comprime nomes e conteudo juntos. Continua lendo os pacotes DDZ1 antigos.',
+    'Formato proprio, nao e ZIP. Arquivos minusculos podem crescer por causa dos nomes e do indice.',
     'Limites: 512 KiB descompactados e 1024 itens. Arquivos corrompidos ou caminhos invalidos sao rejeitados.'}},
+  {title='RAID 0, 5, 6 e 1+0',text={'A > RAID e backup > Conjuntos RAID. Guarda uma versao fixa do arquivo ou pasta selecionado.',
+    'Marque varios discos com clique ou Enter e selecione Confirmar. Maximo de 8 discos por conjunto.',
+    'RAID 0: minimo 2 discos, divide dados sem redundancia. Todos precisam estar disponiveis para restaurar.',
+    'RAID 5: minimo 3 discos, recupera 1 disco perdido. RAID 6: minimo 4, recupera 2 perdidos.',
+    'RAID 1+0: 4, 6 ou 8 discos em pares. Pode perder um disco de cada par, nunca os dois do mesmo par.',
+    'Abrir / recuperar conjunto verifica membros e restaura numa pasta nova. Reconstruir grava um membro em outro floppy.',
+    'Conjuntos usam blocos em .diskdesk-arrays, nao sao unidades virtuais do CraftOS. Nao altere esses arquivos.',
+    'Cada conjunto e uma versao independente. O espelhamento RAID 1 automatico permanece no menu anterior.'}},
   {title='Rede wireless',text={'Instale DiskDesk e modem wireless nos dois computadores.',
     'No destino: abra a pasta e use G (Receber). Veja o ID na barra inferior.',
     'Na origem: selecione o arquivo, use S e digite o ID. Aceite a oferta no destino.',
@@ -641,7 +739,7 @@ local menus = {
   edit = {{'C  Copiar', 'c'}, {'M  Mover', 'm'}, {'V  Colar', 'v'}, {'R  Renomear', 'r'}, {'Delete  Excluir...', 'x'}, {'F  Buscar nesta pasta', 'f'}},
   disk = {{'Escolher unidade', 'd'}, {'Criar backup...', 'b'}, {'Restaurar backup...', 'o'}, {'Nome do disquete', 'l'}, {'Ejetar disquete', 'j'}},
   net = {{'Enviar arquivo...', 's'}, {'Receber arquivo...', 'g'}},
-  protect = {{'Configurar / gerenciar RAID 1','i'}, {'Criar backup com versoes','b'}, {'Restaurar backup','o'}},
+  protect = {{'Espelhamento automatico RAID 1','i'}, {'Conjuntos RAID 0 / 1 / 5 / 6 / 1+0','array'}, {'Criar backup com versoes','b'}, {'Restaurar backup','o'}},
   archive = {{'Compactar arquivo ou pasta (.ddz)','z'}, {'Extrair pacote .ddz','y'}},
   start = {{'[+] Arquivos e organizacao', 'menu:files'}, {'[%] Armazenamento dos discos', 'd'}, {'[=] RAID e backup', 'menu:protect'}, {'[Z] Compactar e extrair', 'menu:archive'}, {'[~] Rede wireless', 'menu:net'}, {'[?] Central de ajuda', 'h'}, {'[x] Sair do DiskDesk', 'q'}},
   files = {{'Criar / editar / imprimir','menu:file'}, {'Copiar / mover / renomear','menu:edit'}, {'Nomear / ejetar disquete','menu:disk'}},
@@ -660,6 +758,7 @@ local function action(command)
   elseif command == 'z' then archiveAction(false)
   elseif command == 'y' then archiveAction(true)
   elseif command == 'i' then raidMenu()
+  elseif command == 'array' then arrayMenu()
   elseif command == 'b' then backupDisk()
   elseif command == 'o' then restoreDisk()
   elseif command == 's' then sendWireless()

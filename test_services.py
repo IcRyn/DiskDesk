@@ -241,6 +241,32 @@ assert(files['disk2/unpacked/docs/repeated.txt']==files['disk/docs/repeated.txt'
 assert(files['disk2/unpacked/docs/a.bin']==files['disk/docs/a.bin'])
 assert(files['disk2/unpacked/docs/empty']==true)
 ''')
+test('DDZ2 tiny folder has compact metadata and preserves both files', '''
+files['disk/pessoal']=true
+files['disk/pessoal/a.txt']='12345678'; files['disk/pessoal/b.txt']='123456789'
+local raw,packed=M.compress('disk/pessoal','disk2/small.ddz')
+assert(raw==17 and packed<80, 'tiny archive too large: '..packed)
+assert(files['disk2/small.ddz']:sub(1,4)=='DDZ2')
+M.extract('disk2/small.ddz','disk2/small')
+assert(files['disk2/small/pessoal/a.txt']=='12345678' and files['disk2/small/pessoal/b.txt']=='123456789')
+print('DDZ2 example: 17 bytes of content -> '..packed..' bytes including names and index')
+''')
+test('DDZ1 legacy archive remains readable', '''
+local raw='old binary'..string.char(0,255)
+local header=textutils.serialize({version=1,entries={{path='old.bin',dir=false,size=#raw,packed=#raw,hash=M.checksum(raw),codec='raw'}}})
+files['disk2/legacy.ddz']='DDZ1\\n'..#header..'\\n'..header..raw
+M.extract('disk2/legacy.ddz','disk2/legacy')
+assert(files['disk2/legacy/old.bin']==raw)
+''')
+test('DDZ2 corrupt index and truncated payload never create destination', '''
+M.compress('disk/docs','disk2/test.ddz')
+local original=files['disk2/test.ddz']
+for _,value in ipairs({original:sub(1,8), original:sub(1,-2), original:sub(1,10)..'X'..original:sub(12)}) do
+  files['disk2/test.ddz']=value
+  assert(not pcall(M.extract,'disk2/test.ddz','disk2/out'))
+  assert(not files['disk2/out'] and not files['disk2/out.partial'])
+end
+''')
 test('DDZ empty file and empty folder', '''
 files['disk/zero']=''
 M.compress('disk/zero','disk2/zero.ddz'); M.extract('disk2/zero.ddz','disk2/zero')

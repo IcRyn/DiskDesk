@@ -2,9 +2,11 @@
 from pathlib import Path
 import xml.etree.ElementTree as ET
 from PIL import Image, ImageDraw, ImageFont
+import sys
 
 directory = Path(__file__).parent
-root = ET.parse(directory / 'preview.svg').getroot()
+name = sys.argv[1] if len(sys.argv)>1 else 'preview'
+root = ET.parse(directory / (name+'.svg')).getroot()
 image = Image.new('RGB', (816, 456), '#f0f0f0')
 draw = ImageDraw.Draw(image)
 font = ImageFont.truetype('C:/Windows/Fonts/consola.ttf', 20)
@@ -16,4 +18,4 @@ for element in root.iter():
                         y + int(element.get('height')) - 1), fill=element.get('fill'))
     elif tag == 'text':
         draw.text((x, y), element.text or '', font=font, fill=element.get('fill'), anchor='ls')
-image.save(directory / 'preview.png')
+image.save(directory / (name+'.png'))

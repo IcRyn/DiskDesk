@@ -104,7 +104,8 @@ peripheral = {
 }
 shell = {run=function() end, execute=function() return true end,
   getRunningProgram=function() return 'diskdesk.lua' end}
-dofile = function()
+dofile = function(path)
+  if path:find('diskdesk_arrays.lua',1,true) then return assert(load(arraySource))() end
   local module=assert(load(serviceSource))()
   if serviceOverride then serviceOverride(module) end
   return module
@@ -150,6 +151,7 @@ end
 def test(name, setup, check):
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.globals().serviceSource = SERVICES
+    lua.globals().arraySource = Path(__file__).with_name('diskdesk_arrays.lua').read_text(encoding='utf-8')
     lua.execute(MOCK)
     lua.execute(setup)
     lua.execute(SOURCE)
@@ -229,6 +231,32 @@ selectText(); char('m'); chooseDisk(); char('v'); char('q')
 ''', "assert(moved and files['disk/note.txt']=='hello' and not files['note.txt'])")
 test('actions menu', "events[#events+1]={'mouse_click',1,15,19}; key('escape'); char('q')", "assert(#snapshots==3)")
 test('context menu', "events[#events+1]={'mouse_click',2,20,6}; key('escape'); char('q')", "assert(#snapshots==3)")
+test('bordered menus fit compact terminal', '''
+screenW=30; screenH=12
+local write=term.write
+term.write=function(s) if s:sub(1,1)=='+' and s:sub(-1)=='+' then borderSeen=true end; write(s) end
+char('a'); key('down'); key('down'); key('enter'); key('down'); key('enter')
+key('down'); key('down'); key('enter'); key('enter'); char('q')
+''', 'assert(borderSeen)')
+test('checkbox selection configures multiple RAID mirrors', '''
+files.disk2='dir'; files.disk3='dir'
+local ids={left=1,right=2,top=3}; local roots={left='disk',right='disk2',top='disk3'}
+peripheral.getNames=function() return {'left','right','top'} end
+peripheral.hasType=function(name,kind) return ids[name]~=nil and kind=='drive' end
+disk.getID=function(name) return ids[name] end
+disk.getMountPath=function(name) return roots[name] end
+disk.getLabel=function(name) return 'Disco '..ids[name] end
+serviceOverride=function(m)
+  m.raidStatus=function() return {enabled=false,text='Desativado'} end
+  m.raidSync=function() return 'Desativado' end
+  m.raidConfigure=function(primary,mirrors,mode)
+    assert(primary.id==1 and #mirrors==2 and mirrors[1].id==2 and mirrors[2].id==3 and mode=='root')
+    configured=true
+  end
+end
+char('i'); key('enter'); key('down'); key('down'); key('enter'); key('enter')
+key('enter'); key('down'); key('enter'); key('up'); key('up'); key('enter'); char('s'); char('q')
+''', 'assert(configured)')
 test('click confirm no', "selectText(); char('x'); events[#events+1]={'mouse_click',1,10,17}; char('q')", "assert(files['note.txt']=='hello')")
 test('wireless send dialog and progress', '''
 serviceOverride=function(m)
@@ -251,17 +279,20 @@ end
 char('g'); char('s'); char('q')
 ''', "assert(received)")
 preview = test('desktop render', "hasSpeaker=true; files['Projetos']='dir'; files['manual.txt']='DiskDesk'; char('q')", "assert(#snapshots>0)")
+menu_preview = test('menu render', "char('a'); key('f1'); char('q')", "assert(#snapshots==3)")
 
 # A deterministic visual preview of actual terminal writes, using only stdlib.
 from html import escape
 palette = {1:'#111111', 2:'#f0f0f0', 3:'#3366cc', 4:'#4c4c4c',
            5:'#999999', 6:'#dede6c', 7:'#4c99b2', 8:'#57a64e', 9:'#cc4c4c'}
-svg = ['<svg xmlns="http://www.w3.org/2000/svg" width="816" height="456" viewBox="0 0 816 456">',
-       '<rect width="816" height="456" fill="#111111"/>',
-       '<g font-family="Consolas, monospace" font-size="20">']
-for index, cell in preview.globals().snapshots[1].items():
-    x, y = ((index-1) % 51)*16, ((index-1)//51)*24
-    svg.append(f'<rect x="{x}" y="{y}" width="16" height="24" fill="{palette[cell[3]]}"/>')
-    svg.append(f'<text x="{x}" y="{y+19}" fill="{palette[cell[2]]}">{escape(cell[1])}</text>')
-svg.append('</g></svg>')
-Path(__file__).with_name('preview.svg').write_text('\n'.join(svg), encoding='utf-8')
+for filename, frame in [('preview.svg', preview.globals().snapshots[1]),
+                        ('preview-menu.svg', menu_preview.globals().snapshots[2])]:
+    svg = ['<svg xmlns="http://www.w3.org/2000/svg" width="816" height="456" viewBox="0 0 816 456">',
+           '<rect width="816" height="456" fill="#111111"/>',
+           '<g font-family="Consolas, monospace" font-size="20">']
+    for index, cell in frame.items():
+        x, y = ((index-1) % 51)*16, ((index-1)//51)*24
+        svg.append(f'<rect x="{x}" y="{y}" width="16" height="24" fill="{palette[cell[3]]}"/>')
+        svg.append(f'<text x="{x}" y="{y+19}" fill="{palette[cell[2]]}">{escape(cell[1])}</text>')
+    svg.append('</g></svg>')
+    Path(__file__).with_name(filename).write_text('\n'.join(svg), encoding='utf-8')

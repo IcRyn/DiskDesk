@@ -53,15 +53,18 @@ local function choose(title, items, initial, bottom)
     if bottom then y = H - rows - 2 end
     offset = math.max(0, math.min(offset, selectedOption - 1))
     if selectedOption > offset + rows then offset = selectedOption - rows end
-    put(x + 1, y + 1, width, string.rep(' ', width), colors.gray)
-    put(x, y, width, ' ' .. title, colors.blue, colors.white)
+    put(x-1,y,width+2,'+'..fit(' '..title..' ',width):gsub(' +$',function(s) return string.rep('-',#s) end)..'+',theme.bg,theme.accent)
     for row = 1, rows do
       local i = offset + row
       put(x, y + row, width, (i == selectedOption and ' > ' or '   ') .. items[i],
         i == selectedOption and theme.select or theme.panel, theme.text)
-      put(x + width, y + row, 1, ' ', colors.gray)
+      put(x-1,y+row,1,'|',theme.bg,theme.accent)
+      put(x+width,y+row,1,'|',theme.bg,theme.accent)
     end
     put(x, y + rows + 1, width, ' [Voltar] F1  |  Enter: escolher', theme.panel, theme.muted)
+    put(x-1,y+rows+1,1,'|',theme.bg,theme.accent)
+    put(x+width,y+rows+1,1,'|',theme.bg,theme.accent)
+    put(x-1,y+rows+2,width+2,'+'..string.rep('-',width)..'+',theme.bg,theme.accent)
     local event, a, b, c = os.pullEvent()
     if event == 'key' then
       if a == keys.escape or a == keys.f1 or a == keys.backspace then return nil end
@@ -401,7 +404,7 @@ local function progress(title)
     local filled = math.floor(width * fraction)
     if filled > 0 then put(3, H-4, filled, string.rep(' ', filled), colors.blue) end
     line(H-2, '  ' .. math.floor(fraction * 100) .. '%  |  ' .. done .. ' / ' .. total, theme.panel)
-    line(H, (title == 'Backup' or title == 'Restaurar') and ' Mantenha os dois discos inseridos.' or ' F1: voltar | mantenha o modem conectado.', theme.panel)
+    line(H, (title=='Enviar' or title=='Receber') and ' F1: voltar | mantenha o modem conectado.' or ' Mantenha os discos conectados ate terminar.', theme.panel)
   end
 end
 local function pickDisk(title, exclude, excludedIDs)
@@ -480,10 +483,42 @@ local function syncRaid()
   raidLabel=ok and result or 'Pendente'
   if not ok then status='RAID pendente: '..tostring(result) end
 end
+local function selectDisks(title,minimum,maximum,excluded,even)
+  scan()
+  local units,checked={},{}
+  for _,unit in ipairs(sources) do
+    if unit.drive then
+      local volume=services.capture(unit.drive)
+      if not excluded or not excluded[volume.id] then units[#units+1]=volume end
+    end
+  end
+  if #units<minimum then error('Conecte ao menos '..minimum..' disquetes disponiveis.',0) end
+  local cursor=2
+  while true do
+    local chosen,labels={},{}
+    for i,unit in ipairs(units) do if checked[i] then chosen[#chosen+1]=unit end end
+    labels[1]='Confirmar '..#chosen..' discos (min '..minimum..')'
+    for i,unit in ipairs(units) do
+      labels[i+1]=(checked[i] and '[x] ' or '[ ] ')..'#'..unit.id..' '..unit.name..' '..sizeLabel(fs.getFreeSpace(unit.root))..' livre'
+    end
+    local selected=choose(title,labels,cursor)
+    if not selected then return end
+    cursor=selected
+    if selected==1 then
+      if #chosen>=minimum and #chosen<=maximum and (not even or #chosen%2==0) then
+        for _,unit in ipairs(chosen) do services.guard(unit) end
+        return chosen
+      end
+      show({'Escolha de '..minimum..' a '..maximum..' discos.',even and 'RAID 1+0 exige uma quantidade par.' or 'Marque os discos com Enter ou clique.'},' Selecao de discos')
+    elseif not checked[selected-1] and #chosen>=maximum then
+      show({'Maximo de '..maximum..' discos.'},' Selecao de discos')
+    else checked[selected-1]=not checked[selected-1] end
+  end
+end
 local function raidMenu()
   while true do
     local state=services.raidStatus()
-    local labels=state.enabled and {'Sincronizar agora','Ver estado do par','Desativar espelhamento'} or {'Configurar RAID 1','Como funciona'}
+    local labels=state.enabled and {'Sincronizar agora','Ver estado dos discos','Desativar espelhamento'} or {'Configurar RAID 1','Como funciona'}
     local selectedAction=choose('RAID 1 / '..state.text,labels)
     if not selectedAction then return end
     if not state.enabled and selectedAction==1 then
@@ -491,19 +526,8 @@ local function raidMenu()
       if not selectedMode then return end
       local primary=pickDisk('Escolha o disco PRINCIPAL')
       if not primary then return end
-      local mirror=pickDisk('Escolha o disco ESPELHO',primary)
-      if not mirror then return end
-      local mirrors={mirror}; local used={[primary.id]=true,[mirror.id]=true}
-      if selectedMode==3 then
-        while #mirrors<8 do
-          local available=false
-          for _,unit in ipairs(sources) do if unit.drive and not used[disk.getID(unit.drive)] then available=true end end
-          if not available or not confirm('Adicionar mais um disquete como espelho?') then break end
-          local extra=pickDisk('Escolha outro ESPELHO',primary,used)
-          if not extra then break end
-          mirrors[#mirrors+1]=extra; used[extra.id]=true
-        end
-      end
+      local mirrors=selectDisks('Marque os ESPELHOS',1,selectedMode==3 and 8 or 1,{[primary.id]=true})
+      if not mirrors then return end
       local mode=selectedMode==2 and 'folder' or 'root'
       local ids={}; for _,unit in ipairs(mirrors) do ids[#ids+1]='#'..unit.id end
       local warning=mode=='root' and 'Copiar tudo para a RAIZ. Arquivos extras dos destinos serao removidos.' or 'Copiar para a pasta RAID1 dos destinos.'
@@ -537,6 +561,71 @@ local function raidMenu()
     end
   end
 end
+local function arrayMenu()
+  local arrays=dofile(fs.combine(fs.getDir(shell.getRunningProgram()),'diskdesk_arrays.lua'))(services)
+  local operation=choose('RAID 0 / 1 / 5 / 6 / 1+0',{'Guardar item em novo conjunto','Abrir / recuperar conjunto','Como funcionam os modos'})
+  if not operation then return end
+  if operation==3 then
+    show({'Conjuntos guardam uma versao do item selecionado.',
+      'Os blocos ficam em .diskdesk-arrays nos discos.',
+      'Nao monta uma unidade virtual do CraftOS.',
+      'RAID 0: 2+ discos, divide dados, sem redundancia.',
+      'RAID 1: 2+ discos, copia completa em cada um.',
+      'RAID 5: 3+ discos, suporta perder 1 disco.',
+      'RAID 6: 4+ discos, suporta perder 2 discos.',
+      'RAID 1+0: 4/6/8 discos, espelhos em pares.',
+      '1+0: deve restar um membro de cada par.',
+      'Restaurar valida e extrai para uma pasta nova.',
+      'Reconstruir grava membro perdido em outro floppy.',
+      'Para atualizar dados, guarde uma nova versao.',
+      'RAID 1 automatico continua no menu anterior.'},' Conjuntos RAID')
+    return
+  end
+  if operation==1 then
+    local item=requireItem()
+    local modeIndex=choose('Tipo do novo conjunto',{'RAID 0 - divisao, SEM redundancia','RAID 1 - espelhos completos','RAID 5 - paridade simples','RAID 6 - paridade dupla','RAID 1+0 - pares de espelhos'})
+    if not modeIndex then return end
+    local mode=({'0','1','5','6','10'})[modeIndex]
+    local minimum=({2,2,3,4,4})[modeIndex]
+    local units=selectDisks('Marque discos do RAID '..mode,minimum,8,nil,mode=='10')
+    if not units then return end
+    local update=progress('Preparando conjunto RAID')
+    update(0,1,'Compactando '..item.name)
+    local payload=services.archivePack(item.path,pathGuard(item.path))
+    local bytes=arrays.plan(#payload,mode,#units)
+    local ids={}; for _,unit in ipairs(units) do ids[#ids+1]='#'..unit.id end
+    local detail=mode=='10' and ' Pares na ordem: 1-2, 3-4, 5-6, 7-8.' or ''
+    if not confirm('Guardar '..item.name..' em RAID '..mode..' nos discos '..table.concat(ids,', ')..'? '..sizeLabel(bytes)..' de blocos por disco + indice.'..detail..(mode=='0' and ' Perder qualquer disco impede recuperar os dados.' or '')) then return end
+    local result=arrays.create(payload,item.name,mode,units,update)
+    status='Conjunto RAID '..mode..' verificado.'
+    show({'Conjunto: '..result.id,'RAID '..mode..' / '..#units..' discos','Conteudo: '..item.name,'Original preservado. Esta e uma versao fixa.','Para ler: RAID > Abrir / recuperar conjunto.'},' RAID salvo')
+  else
+    local sets=arrays.list(); if #sets==0 then error('Nenhum conjunto RAID encontrado nos discos conectados.',0) end
+    local labels={}; for i,m in ipairs(sets) do labels[i]='RAID '..m.mode..' '..m.name..' / '..m.id end
+    local index=choose('Conjuntos nos discos',labels); if not index then return end
+    local m=sets[index]; local state=arrays.status(m)
+    local task=choose('RAID '..m.mode..': '..state.text,{'Ver discos / integridade','Restaurar nesta pasta','Reconstruir disco perdido'})
+    if task==1 then
+      local lines={'Conjunto: '..m.id,'Estado: '..state.text,'Dados: '..sizeLabel(m.size),'Blocos por disco: '..sizeLabel(m.shardSize)}
+      for i=1,m.n do lines[#lines+1]='Posicao '..i..': '..(state.volumes[i] and ('OK / disco #'..state.volumes[i].id) or 'ausente ou corrompido') end
+      if m.mode=='10' then lines[#lines+1]='Pares: 1-2, 3-4, 5-6, 7-8 (se existirem).' end
+      show(lines,' Integridade do conjunto')
+    elseif task==2 then
+      local target=newName('Nome de uma NOVA pasta para restaurar:'); if not target then return end
+      arrays.restore(m,target,pathGuard(target),progress('Restaurar RAID'))
+      status='RAID restaurado em '..fs.getName(target)
+    elseif task==3 then
+      if not state.readable then error('Reconecte mais membros originais para recuperar.',0) end
+      if #state.missing==0 then status='Todos os membros estao integros.'; return end
+      local missing={}; for i,slot in ipairs(state.missing) do missing[i]='Reconstruir posicao '..slot end
+      local selectedSlot=choose('Membro perdido ou corrompido',missing); if not selectedSlot then return end
+      local dest=pickDisk('Disco SUBSTITUTO',nil,state.occupied); if not dest then return end
+      if not confirm('Reconstruir posicao '..state.missing[selectedSlot]..' no disco #'..dest.id..'? Outros arquivos serao preservados.') then return end
+      arrays.rebuild(m,state.missing[selectedSlot],dest,progress('Reconstruindo RAID'))
+      status='Membro RAID reconstruido e verificado.'
+    end
+  end
+end
 local function archiveAction(extract)
   local item=requireItem()
   if extract and item.dir then error('Selecione um pacote .ddz.',0) end
@@ -549,7 +638,7 @@ local function archiveAction(extract)
     services.extract(item.path,target,guard); status='Extraido em: '..fs.getName(target)
   else
     local original,packed=services.compress(item.path,target,guard)
-    status='Pacote: '..sizeLabel(original)..' -> '..sizeLabel(packed)
+    status='Pacote: '..sizeLabel(original)..' -> '..sizeLabel(packed)..(packed>=original and ' (inclui nomes/indice)' or (' (-'..math.floor((1-packed/original)*100)..'%)'))
   end
   filter=''
 end
@@ -578,8 +667,17 @@ local helpTopics={
   {title='Compactacao DDZ',text={'A > Compactar e extrair. Selecione um arquivo ou pasta e escolha Compactar.',
     'O pacote .ddz preserva subpastas, arquivos binarios e pastas vazias. Pode enviar esse pacote pelo wireless.',
     'Para abrir, selecione o pacote, escolha Extrair e informe o nome de uma pasta nova.',
-    'Formato proprio do DiskDesk, nao e ZIP. Compressao LZW quando diminui o arquivo; senao conserva o bloco original.',
+    'DDZ2 usa indice binario pequeno e comprime nomes e conteudo juntos. Continua lendo os pacotes DDZ1 antigos.',
+    'Formato proprio, nao e ZIP. Arquivos minusculos podem crescer por causa dos nomes e do indice.',
     'Limites: 512 KiB descompactados e 1024 itens. Arquivos corrompidos ou caminhos invalidos sao rejeitados.'}},
+  {title='RAID 0, 5, 6 e 1+0',text={'A > RAID e backup > Conjuntos RAID. Guarda uma versao fixa do arquivo ou pasta selecionado.',
+    'Marque varios discos com clique ou Enter e selecione Confirmar. Maximo de 8 discos por conjunto.',
+    'RAID 0: minimo 2 discos, divide dados sem redundancia. Todos precisam estar disponiveis para restaurar.',
+    'RAID 5: minimo 3 discos, recupera 1 disco perdido. RAID 6: minimo 4, recupera 2 perdidos.',
+    'RAID 1+0: 4, 6 ou 8 discos em pares. Pode perder um disco de cada par, nunca os dois do mesmo par.',
+    'Abrir / recuperar conjunto verifica membros e restaura numa pasta nova. Reconstruir grava um membro em outro floppy.',
+    'Conjuntos usam blocos em .diskdesk-arrays, nao sao unidades virtuais do CraftOS. Nao altere esses arquivos.',
+    'Cada conjunto e uma versao independente. O espelhamento RAID 1 automatico permanece no menu anterior.'}},
   {title='Rede wireless',text={'Instale DiskDesk e modem wireless nos dois computadores.',
     'No destino: abra a pasta e use G (Receber). Veja o ID na barra inferior.',
     'Na origem: selecione o arquivo, use S e digite o ID. Aceite a oferta no destino.',
@@ -645,7 +743,7 @@ local menus = {
   edit = {{'C  Copiar', 'c'}, {'M  Mover', 'm'}, {'V  Colar', 'v'}, {'R  Renomear', 'r'}, {'Delete  Excluir...', 'x'}, {'F  Buscar nesta pasta', 'f'}},
   disk = {{'Escolher unidade', 'd'}, {'Criar backup...', 'b'}, {'Restaurar backup...', 'o'}, {'Nome do disquete', 'l'}, {'Ejetar disquete', 'j'}},
   net = {{'Enviar arquivo...', 's'}, {'Receber arquivo...', 'g'}},
-  protect = {{'Configurar / gerenciar RAID 1','i'}, {'Criar backup com versoes','b'}, {'Restaurar backup','o'}},
+  protect = {{'Espelhamento automatico RAID 1','i'}, {'Conjuntos RAID 0 / 1 / 5 / 6 / 1+0','array'}, {'Criar backup com versoes','b'}, {'Restaurar backup','o'}},
   archive = {{'Compactar arquivo ou pasta (.ddz)','z'}, {'Extrair pacote .ddz','y'}},
   start = {{'[+] Arquivos e organizacao', 'menu:files'}, {'[%] Armazenamento dos discos', 'd'}, {'[=] RAID e backup', 'menu:protect'}, {'[Z] Compactar e extrair', 'menu:archive'}, {'[~] Rede wireless', 'menu:net'}, {'[?] Central de ajuda', 'h'}, {'[x] Sair do DiskDesk', 'q'}},
   files = {{'Criar / editar / imprimir','menu:file'}, {'Copiar / mover / renomear','menu:edit'}, {'Nomear / ejetar disquete','menu:disk'}},
@@ -664,6 +762,7 @@ local function action(command)
   elseif command == 'z' then archiveAction(false)
   elseif command == 'y' then archiveAction(true)
   elseif command == 'i' then raidMenu()
+  elseif command == 'array' then arrayMenu()
   elseif command == 'b' then backupDisk()
   elseif command == 'o' then restoreDisk()
   elseif command == 's' then sendWireless()
@@ -1440,7 +1539,7 @@ function M.moveItem(source,target,guard)
   guard(); fs.delete(source)
   return target
 end
--- DDZ: bounded LZW or raw blocks, a readable manifest, and binary payloads.
+-- DDZ2: compact binary tree and whole-body LZW; DDZ1 remains readable.
 local archiveLimit=512*1024
 local function lzwEncode(text)
   if #text==0 then return '' end
@@ -1490,12 +1589,32 @@ local function writeVerified(path,data,guard)
   guard(); local size,hash=hashFile(path,guard)
   if size~=#data or hash~=M.checksum(data) then fail('Falha ao verificar arquivo gravado.') end
 end
-function M.compress(source,target,guard)
+local function varint(n)
+  local out={}
+  repeat local b=n%128; n=math.floor(n/128); out[#out+1]=string.char(b+(n>0 and 128 or 0)) until n==0
+  return table.concat(out)
+end
+local function numberReader(data)
+  local pos=1
+  local function take(n)
+    if n<0 or pos+n-1>#data then fail('Pacote DDZ incompleto.') end
+    local value=data:sub(pos,pos+n-1); pos=pos+n; return value
+  end
+  local function number()
+    local result,mult=0,1
+    for _=1,5 do
+      local b=take(1):byte(); result=result+(b%128)*mult
+      if b<128 then return result end
+      mult=mult*128
+    end
+    fail('Numero DDZ invalido.')
+  end
+  return take,number,function() return pos end
+end
+function M.archivePack(source,guard)
   guard=guard or function() end
-  guard(); M.assertWritable(target)
+  guard()
   if fs.isDriveRoot(source) then fail('Selecione um arquivo ou pasta dentro da unidade.') end
-  if fs.exists(target) or fs.exists(target..'.partial') then fail('Destino ja existe.') end
-  if target==source or target:sub(1,#source+1)==source..'/' then fail('Salve o pacote fora da pasta de origem.') end
   local name=fs.getName(source)
   if not M.safeName(name) then fail('Nome invalido para o pacote.') end
   local entries,total
@@ -1505,37 +1624,81 @@ function M.compress(source,target,guard)
     table.insert(entries,1,{path=name,dir=true})
   else entries={{path=name,dir=false}}; total=fs.getSize(source) end
   if total>archiveLimit or #entries>1024 then fail('Limite DDZ: 512 KiB originais e 1024 itens.') end
-  local blocks,actualTotal={},0
-  for _,entry in ipairs(entries) do
+  local blocks,actualTotal,parents={varint(#entries)},0,{['']=0}
+  for i,entry in ipairs(entries) do
     guard()
+    if not safeRelative(entry.path) then fail('Caminho muito longo ou invalido para DDZ.') end
+    local parent=parents[fs.getDir(entry.path)]
+    if not parent then fail('Pasta pai ausente.') end
+    local basename=fs.getName(entry.path)
+    blocks[#blocks+1]=varint(parent)..varint(#basename)..basename..string.char(entry.dir and 0 or 1)
+    if entry.dir then parents[entry.path]=i end
     if not entry.dir then
       local path=fs.combine(fs.getDir(source),entry.path)
       local raw=readBounded(path,archiveLimit-actualTotal)
       actualTotal=actualTotal+#raw
-      local compressed=lzwEncode(raw)
-      entry.codec=#compressed<#raw and 'lzw' or 'raw'
-      local data=entry.codec=='lzw' and compressed or raw
-      entry.size,entry.hash,entry.packed=#raw,M.checksum(raw),#data
-      blocks[#blocks+1]=data
+      blocks[#blocks+1]=varint(#raw)..raw
     end
   end
-  local header=textutils.serialize({version=1,entries=entries})
-  if #header>128*1024 then fail('Indice DDZ muito grande.') end
-  local payload='DDZ1\n'..#header..'\n'..header..table.concat(blocks)
+  local body=table.concat(blocks)
+  if #body-actualTotal>128*1024 then fail('Indice DDZ muito grande.') end
+  local packed=lzwEncode(body)
+  local useLzw=#packed<#body
+  local hash=M.checksum(body)
+  local hashBytes={}; for _=1,4 do hashBytes[#hashBytes+1]=string.char(hash%256); hash=math.floor(hash/256) end
+  return 'DDZ2'..string.char(useLzw and 1 or 0)..varint(#body)..table.concat(hashBytes)..(useLzw and packed or body),actualTotal
+end
+function M.compress(source,target,guard)
+  guard=guard or function() end
+  guard(); M.assertWritable(target)
+  if fs.exists(target) or fs.exists(target..'.partial') then fail('Destino ja existe.') end
+  if target==source or target:sub(1,#source+1)==source..'/' then fail('Salve o pacote fora da pasta de origem.') end
+  local payload,actualTotal=M.archivePack(source,guard)
   guard(); room(fs.getDir(target),#payload+1024)
   writeVerified(target..'.partial',payload,guard)
   guard(); fs.move(target..'.partial',target)
   return actualTotal,#payload
 end
-function M.extract(source,target,guard)
+function M.archiveExtract(data,target,guard)
   guard=guard or function() end
   guard(); M.assertWritable(target)
   if fs.exists(target) or fs.exists(target..'.partial') then fail('Escolha uma pasta nova para extrair.') end
-  local data=readBounded(source,archiveLimit+128*1024+32)
-  local length,position=data:match('^DDZ1\n(%d+)\n()')
-  length=tonumber(length)
-  if not length or length>128*1024 or position+length-1>#data then fail('Cabecalho DDZ invalido.') end
-  local manifest=textutils.unserialize(data:sub(position,position+length-1)); position=position+length
+  if #data>archiveLimit+128*1024+32 then fail('Pacote DDZ muito grande.') end
+  local manifest,position
+  if data:sub(1,4)=='DDZ2' then
+    local take,num,pos=numberReader(data:sub(5))
+    local codec=take(1):byte(); local length=num(); local hash=0
+    for i=0,3 do hash=hash+take(1):byte()*256^i end
+    if length>archiveLimit+128*1024 then fail('DDZ excede limite.') end
+    local body=data:sub(4+pos())
+    if codec==1 then body=lzwDecode(body,length)
+    elseif codec~=0 then fail('Codec DDZ desconhecido.') end
+    if #body~=length or M.checksum(body)~=hash then fail('Pacote DDZ corrompido.') end
+    take,num,pos=numberReader(body)
+    local count=num(); if count>1024 then fail('Muitos itens DDZ.') end
+    manifest={version=1,entries={}}; local blocks={}; local total=0
+    for i=1,count do
+      local parent=num(); local nameLength=num()
+      if parent>=i or nameLength>128 then fail('Indice DDZ invalido.') end
+      local name=take(nameLength); if not M.safeName(name) then fail('Nome DDZ invalido.') end
+      local base=parent==0 and '' or manifest.entries[parent]
+      if parent~=0 and (not base or not base.dir) then fail('Pasta DDZ invalida.') end
+      local flag=take(1):byte(); if flag>1 then fail('Tipo DDZ invalido.') end
+      local entry={path=parent==0 and name or fs.combine(base.path,name),dir=flag==0}
+      if not entry.dir then
+        local size=num(); total=total+size; if total>archiveLimit then fail('DDZ excede limite.') end
+        local block=take(size); blocks[#blocks+1]=block
+        entry.size,entry.packed,entry.hash,entry.codec=size,size,M.checksum(block),'raw'
+      end
+      manifest.entries[i]=entry
+    end
+    if pos()~=#body+1 then fail('Dados extras no pacote DDZ.') end
+    data=table.concat(blocks); position=1
+  else
+    local length; length,position=data:match('^DDZ1\n(%d+)\n()'); length=tonumber(length)
+    if not length or length>128*1024 or position+length-1>#data then fail('Cabecalho DDZ invalido.') end
+    manifest=textutils.unserialize(data:sub(position,position+length-1)); position=position+length
+  end
   if type(manifest)~='table' or manifest.version~=1 or type(manifest.entries)~='table' or #manifest.entries>1024 then fail('Indice DDZ invalido.') end
   local files,seen,total={},{},0
   for _,entry in ipairs(manifest.entries) do
@@ -1572,7 +1735,297 @@ function M.extract(source,target,guard)
   guard(); fs.move(stage,target)
   return target
 end
+function M.extract(source,target,guard)
+  return M.archiveExtract(readBounded(source,archiveLimit+128*1024+32),target,guard)
+end
 return M
+]=]},
+  {name=[=[
+diskdesk_arrays.lua]=], contents=[=[
+-- Immutable archive sets with striped blocks, rotating P/Q parity and paired mirrors.
+-- Format is DiskDesk-specific, not a CraftOS filesystem mount or Linux RAID format.
+return function(S)
+local A={}; local base='.diskdesk-arrays'; local block=1024; local limit=640*1024+32
+local serial=0
+local function fail(s) error(s,0) end
+local function yield() if sleep then sleep(0) end end
+local function slowXor(a,b)
+  local value,p=0,1
+  for _=1,8 do
+    if a%2~=b%2 then value=value+p end
+    a=math.floor(a/2); b=math.floor(b/2); p=p*2
+  end
+  return value
+end
+local nibble={}
+for a=0,15 do nibble[a]={}; for b=0,15 do nibble[a][b]=slowXor(a,b) end end
+local function xor(a,b) return nibble[a%16][b%16]+16*nibble[math.floor(a/16)][math.floor(b/16)] end
+-- Multiplication in GF(256), polynomial x^8+x^4+x^3+x^2+1 (0x11d).
+local exp,log={},{}; local v=1
+for i=0,254 do
+  exp[i]=v; log[v]=i; v=v*2
+  if v>=256 then v=xor(v-256,29) end
+end
+local function mul(a,b) if a==0 or b==0 then return 0 end; return exp[(log[a]+log[b])%255] end
+local function div(a,b) if b==0 then fail('Divisor RAID invalido.') end; if a==0 then return 0 end; return exp[(log[a]-log[b])%255] end
+local function integer(n,low,high) return type(n)=='number' and n%1==0 and n>=low and n<=high end
+local function dataCount(mode,n)
+  if not integer(n,2,8) then fail('Escolha de 2 a 8 discos.') end
+  if mode=='0' then return n end
+  if mode=='1' then return 1 end
+  if mode=='5' and n>=3 then return n-1 end
+  if mode=='6' and n>=4 then return n-2 end
+  if mode=='10' and n>=4 and n%2==0 then return n/2 end
+  fail('Numero de discos invalido para RAID '..tostring(mode)..'.')
+end
+function A.plan(size,mode,n)
+  local k=dataCount(mode,n)
+  if not integer(size,1,limit) then fail('Pacote RAID excede 640 KiB.') end
+  return math.ceil(size/(k*block))*block,k
+end
+local function layout(mode,n,stripe)
+  local slots,p,q={},nil,nil
+  if mode=='1' then return {1} end
+  if mode=='10' then for i=1,n,2 do slots[#slots+1]=i end; return slots end
+  if mode=='5' or mode=='6' then
+    p=n-(stripe%n)
+    if mode=='6' then q=p%n+1 end
+  end
+  for i=1,n do if i~=p and i~=q then slots[#slots+1]=i end end
+  return slots,p,q
+end
+local function parity(data)
+  local p,q={},{}
+  for b=1,block do
+    local pv,qv=0,0
+    for j,s in ipairs(data) do local x=s:byte(b); pv=xor(pv,x); qv=xor(qv,mul(x,exp[j-1])) end
+    p[b]=string.char(pv); q[b]=string.char(qv)
+  end
+  return table.concat(p),table.concat(q)
+end
+local function encode(payload,mode,n,progress)
+  local size,k=A.plan(#payload,mode,n); local parts={}
+  for i=1,n do parts[i]={} end
+  local pos=1
+  for stripe=0,size/block-1 do
+    local slots,p,q=layout(mode,n,stripe); local data={}
+    for j,slot in ipairs(slots) do
+      local s=payload:sub(pos,pos+block-1); pos=pos+block
+      s=s..string.rep('\0',block-#s); data[j]=s; parts[slot][#parts[slot]+1]=s
+      if mode=='10' then parts[slot+1][#parts[slot+1]+1]=s end
+    end
+    if mode=='1' then for i=2,n do parts[i][#parts[i]+1]=data[1] end end
+    if p then
+      local pv,qv=parity(data); parts[p][#parts[p]+1]=pv
+      if q then parts[q][#parts[q]+1]=qv end
+    end
+    if progress then progress(stripe+1,size/block,'Calculando blocos RAID '..mode) end
+    yield()
+  end
+  for i=1,n do parts[i]=table.concat(parts[i]) end
+  return parts,size
+end
+local function read(path,max)
+  if not fs.exists(path) or fs.isDir(path) or fs.getSize(path)>max then fail('Arquivo RAID ausente ou invalido.') end
+  local f,err=fs.open(path,'rb'); if not f then fail(err) end
+  local ok,data=pcall(f.readAll); f.close(); if not ok then fail(data) end
+  if #data>max then fail('Arquivo RAID cresceu durante leitura.') end
+  return data
+end
+local function write(path,data,guard)
+  guard(); local f,err=fs.open(path,'wb'); if not f then fail(err) end
+  local ok,why=pcall(f.write,data); f.close(); if not ok then fail(why) end
+  guard(); if read(path,#data)~=data then fail('Falha de verificacao RAID.') end
+end
+local function room(volume,bytes)
+  S.guard(volume); S.assertWritable(volume.root)
+  if fs.isReadOnly(volume.root) then fail('Disco somente leitura.') end
+  local free=fs.getFreeSpace(volume.root)
+  if type(free)=='number' and free<bytes then fail('Espaco insuficiente no disco #'..volume.id..'.') end
+end
+local function valid(m)
+  if type(m)~='table' or m.version~=1 or type(m.id)~='string' or not m.id:match('^[%w%-]+$') or #m.id>80 or
+    not S.safeName(m.name) or not integer(m.n,2,8) or not integer(m.size,1,limit) or
+    not integer(m.hash,0,4294967295) or type(m.hashes)~='table' or #m.hashes~=m.n or m.block~=block then fail('Indice RAID invalido.') end
+  local expected=A.plan(m.size,m.mode,m.n)
+  if m.shardSize~=expected then fail('Tamanho dos blocos RAID invalido.') end
+  for i=1,m.n do if not integer(m.hashes[i],0,4294967295) then fail('Checksum RAID invalido.') end end
+  return m
+end
+local function root(volume,id) return fs.combine(volume.root,base..'/'..id) end
+local function devices()
+  local result={}
+  for _,name in ipairs(peripheral.getNames()) do
+    if peripheral.hasType(name,'drive') and disk.getMountPath(name) then result[#result+1]=S.capture(name) end
+  end
+  table.sort(result,function(a,b) return a.id<b.id end)
+  return result
+end
+function A.list()
+  local found={}
+  for _,volume in ipairs(devices()) do
+    local dir=fs.combine(volume.root,base)
+    if fs.exists(dir) and fs.isDir(dir) then
+      for _,id in ipairs(fs.list(dir)) do
+        local ok,m=pcall(function()
+          S.guard(volume)
+          local candidate=valid(textutils.unserialize(read(fs.combine(dir,id..'/manifest'),16384)))
+          local slot,diskID=read(fs.combine(dir,id..'/member'),64):match('^(%d+):(%d+)$')
+          if candidate.id~=id or not integer(tonumber(slot),1,candidate.n) or tonumber(diskID)~=volume.id then fail('Membro incorreto.') end
+          return candidate
+        end)
+        if ok then found[id]=m elseif tostring(m)=='Terminated' then fail(m) end
+      end
+    end
+  end
+  local list={}; for _,m in pairs(found) do list[#list+1]=m end
+  table.sort(list,function(a,b) return a.id<b.id end); return list
+end
+local function same(a,b)
+  for _,k in ipairs({'version','id','name','mode','n','size','hash','block','shardSize'}) do if a[k]~=b[k] then return false end end
+  for i=1,a.n do if a.hashes[i]~=b.hashes[i] then return false end end
+  return true
+end
+local function gather(m)
+  valid(m); local shards,volumes,occupied={},{},{}
+  for _,volume in ipairs(devices()) do
+    local dir=root(volume,m.id)
+    if fs.exists(dir) then
+      occupied[volume.id]=true
+      local ok,slot,data=pcall(function()
+        S.guard(volume)
+        local info=valid(textutils.unserialize(read(dir..'/manifest',16384)))
+        if not same(m,info) then fail('Indice de outro conjunto.') end
+        local index,id=read(dir..'/member',64):match('^(%d+):(%d+)$'); index=tonumber(index)
+        if not integer(index,1,m.n) or tonumber(id)~=volume.id then fail('Membro incorreto.') end
+        local content=read(dir..'/shard',m.shardSize); S.guard(volume)
+        if #content~=m.shardSize or S.checksum(content)~=m.hashes[index] then fail('Bloco RAID corrompido.') end
+        return index,content
+      end)
+      if ok then
+        if shards[slot] and shards[slot]~=data then fail('Membros conflitantes.') end
+        shards[slot]=data; volumes[slot]=volume
+      elseif tostring(slot)=='Terminated' then fail(slot) end
+    end
+  end
+  return shards,volumes,occupied
+end
+local function recoverable(m,shards)
+  local missing=0; for i=1,m.n do if not shards[i] then missing=missing+1 end end
+  if m.mode=='0' then return missing==0 end
+  if m.mode=='1' then return missing<m.n end
+  if m.mode=='5' then return missing<=1 end
+  if m.mode=='6' then return missing<=2 end
+  for i=1,m.n,2 do if not shards[i] and not shards[i+1] then return false end end
+  return true
+end
+function A.status(m)
+  local shards,volumes,occupied=gather(m); local missing={}
+  for i=1,m.n do if not shards[i] then missing[#missing+1]=i end end
+  return {missing=missing,volumes=volumes,occupied=occupied,readable=recoverable(m,shards),
+    text=#missing==0 and 'Integro' or (recoverable(m,shards) and 'Degradado / recuperavel' or 'Discos insuficientes')}
+end
+local function decode(m,shards,progress)
+  if not recoverable(m,shards) then fail('Perdas excedem a redundancia. Reconecte os discos originais.') end
+  local out={}
+  for stripe=0,m.shardSize/block-1 do
+    local slots,p,q=layout(m.mode,m.n,stripe); local data,missing={},{}
+    local function slice(slot)
+      return shards[slot] and shards[slot]:sub(stripe*block+1,(stripe+1)*block)
+    end
+    for j,slot in ipairs(slots) do
+      data[j]=slice(slot)
+      if m.mode=='10' then data[j]=data[j] or slice(slot+1) end
+      if m.mode=='1' and not data[j] then for i=2,m.n do data[j]=data[j] or slice(i) end end
+      if not data[j] then missing[#missing+1]=j end
+    end
+    if #missing>0 then
+      local pb,qb=p and slice(p),q and slice(q); local recovered={}
+      for _,j in ipairs(missing) do recovered[j]={} end
+      for b=1,block do
+        local pp,qq=pb and pb:byte(b) or 0,qb and qb:byte(b) or 0
+        for j=1,#slots do
+          if data[j] then local value=data[j]:byte(b); pp=xor(pp,value); qq=xor(qq,mul(value,exp[j-1])) end
+        end
+        local x=missing[1]
+        if #missing==1 then recovered[x][b]=string.char(pb and pp or div(qq,exp[x-1]))
+        else
+          local y=missing[2]
+          local xv=div(xor(qq,mul(exp[y-1],pp)),xor(exp[x-1],exp[y-1]))
+          recovered[x][b]=string.char(xv); recovered[y][b]=string.char(xor(pp,xv))
+        end
+      end
+      for _,j in ipairs(missing) do data[j]=table.concat(recovered[j]) end
+    end
+    for j=1,#slots do out[#out+1]=data[j] end
+    if progress then progress(stripe+1,m.shardSize/block,'Lendo RAID '..m.mode) end
+    yield()
+  end
+  local payload=table.concat(out):sub(1,m.size)
+  if #payload~=m.size or S.checksum(payload)~=m.hash then fail('Conteudo RAID nao passou na verificacao.') end
+  return payload
+end
+function A.create(payload,name,mode,volumes,progress)
+  if not S.safeName(name) then fail('Nome de conjunto invalido.') end
+  local shardSize=A.plan(#payload,mode,#volumes); local seen={}
+  for _,volume in ipairs(volumes) do
+    if seen[volume.id] then fail('Selecione discos diferentes.') end; seen[volume.id]=true
+    room(volume,shardSize+8192)
+  end
+  serial=serial+1
+  local id=tostring(os.getComputerID())..'-'..tostring(os.epoch('utc'))..'-'..serial
+  for _,volume in ipairs(volumes) do
+    if fs.exists(root(volume,id)) or fs.exists(root(volume,id)..'.partial') then fail('Identificador RAID ja existe. Tente novamente.') end
+  end
+  local shards=encode(payload,mode,#volumes,progress)
+  local m={version=1,id=id,name=name,mode=mode,n=#volumes,size=#payload,hash=S.checksum(payload),block=block,shardSize=shardSize,hashes={}}
+  for i,s in ipairs(shards) do m.hashes[i]=S.checksum(s) end
+  local manifest=textutils.serialize(m)
+  local function guard() for _,volume in ipairs(volumes) do S.guard(volume) end end
+  -- Stage every member before making any discoverable. Each set is immutable.
+  for i,volume in ipairs(volumes) do
+    guard(); room(volume,shardSize+#manifest+4096)
+    local stage=root(volume,id)..'.partial'; fs.makeDir(stage)
+    write(stage..'/shard',shards[i],guard)
+    write(stage..'/manifest',manifest,guard)
+    write(stage..'/member',i..':'..volume.id,guard)
+    if progress then progress(i,#volumes,'Verificado disco #'..volume.id) end
+  end
+  for _,volume in ipairs(volumes) do guard(); fs.move(root(volume,id)..'.partial',root(volume,id)) end
+  return m
+end
+function A.restore(m,target,guard,progress)
+  local shards,volumes=gather(m)
+  local function check()
+    if guard then guard() end
+    for _,volume in pairs(volumes) do S.guard(volume) end
+  end
+  check(); local payload=decode(m,shards,progress); check()
+  return S.archiveExtract(payload,target,check)
+end
+function A.rebuild(m,slot,dest,progress)
+  if not integer(slot,1,m.n) then fail('Posicao RAID invalida.') end
+  local shards,volumes,occupied=gather(m)
+  if shards[slot] then fail('Membro ja esta integro.') end
+  if occupied[dest.id] then fail('Escolha outro disquete sem este conjunto.') end
+  room(dest,m.shardSize+8192)
+  local function guard()
+    S.guard(dest); for _,volume in pairs(volumes) do S.guard(volume) end
+  end
+  local path=root(dest,m.id)
+  if fs.exists(path) or fs.exists(path..'.partial') then fail('Destino ja contem este conjunto ou uma tentativa parcial.') end
+  guard(); local payload=decode(m,shards,progress)
+  local rebuilt=encode(payload,m.mode,m.n,progress)
+  if S.checksum(rebuilt[slot])~=m.hashes[slot] then fail('Reconstrucao nao confere.') end
+  guard(); local stage=path..'.partial'; fs.makeDir(stage)
+  write(stage..'/shard',rebuilt[slot],guard)
+  write(stage..'/manifest',textutils.serialize(m),guard)
+  write(stage..'/member',slot..':'..dest.id,guard)
+  guard(); fs.move(stage,path)
+  return dest
+end
+return A
+end
 ]=]},
   {name=[=[
 launcher]=], contents=[=[

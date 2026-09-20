@@ -24,6 +24,7 @@ def test(name, before, check):
     lua.globals().serviceSource = (root / 'diskdesk_services.lua').read_text(encoding='utf-8')
     lua.globals().expectedMain = (root / 'diskdesk.lua').read_text(encoding='utf-8')
     lua.globals().expectedService = (root / 'diskdesk_services.lua').read_text(encoding='utf-8')
+    lua.globals().expectedArrays = (root / 'diskdesk_arrays.lua').read_text(encoding='utf-8')
     lua.execute(base + setup + before)
     lua.execute(installer)
     lua.execute(check)
@@ -32,6 +33,7 @@ def test(name, before, check):
 test('fresh installation matches source bytes', '', '''
 assert(files['diskdesk-app/diskdesk.lua']==expectedMain)
 assert(files['diskdesk-app/diskdesk_services.lua']==expectedService)
+assert(files['diskdesk-app/diskdesk_arrays.lua']==expectedArrays)
 assert(files['diskdesk.lua']:find('/diskdesk-app/diskdesk.lua',1,true))
 assert(not files['diskdesk-backup-1000'])
 ''')

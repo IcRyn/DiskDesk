@@ -2,14 +2,9 @@
 
 Interface escura com destaque ciano, barra lateral de unidades, ícones, busca e rodapé simplificado: **D: unidades · A: menu · H: ajuda**. O menu A reúne todas as ações, e o botão direito mostra ações do arquivo. Inclui editor de textos, impressão, backup versionado, restauração e transferência wireless.
 
-![preview](preview.png)
 ## Instalar ou atualizar
 
 ### Instalador em um arquivo (recomendado)
-
-Use no computador: `wget run https://raw.githubusercontent.com/IcRyn/DiskDesk/main/instalar_diskdesk.lua`
-
-ou
 
 Transfira apenas **`instalar_diskdesk.lua`** para o computador do jogo ou para um disquete e execute:
 
@@ -17,7 +12,7 @@ Transfira apenas **`instalar_diskdesk.lua`** para o computador do jogo ou para u
 instalar_diskdesk
 ```
 
-Se estiver no disquete, use o caminho dele, por exemplo `disk/instalar_diskdesk`. Confirme com **s**. O instalador funciona offline: os dois arquivos Lua já estão embutidos nele. Instala em `/diskdesk-app/`, cria o atalho `/diskdesk.lua`, verifica os arquivos gravados e oferece abrir o programa ao terminar.
+Se estiver no disquete, use o caminho dele, por exemplo `disk/instalar_diskdesk`. Confirme com **s**. O instalador funciona offline: os três módulos Lua já estão embutidos nele. Instala em `/diskdesk-app/`, cria o atalho `/diskdesk.lua`, verifica os arquivos gravados e oferece abrir o programa ao terminar.
 
 Depois, execute **`/diskdesk`** de qualquer pasta (ou `diskdesk` na raiz).
 
@@ -27,14 +22,15 @@ O instalador ainda precisa ser transferido para o jogo uma vez. Ele pode ser lev
 
 ### Instalação manual
 
-Copie **os dois arquivos para a mesma pasta do computador do jogo**:
+Copie **os três arquivos para a mesma pasta do computador do jogo**:
 
 ```text
 diskdesk.lua
 diskdesk_services.lua
+diskdesk_arrays.lua
 ```
 
-O pacote `DiskDesk-3.zip` contém o instalador, os dois arquivos do programa e este guia. Extraia no computador real antes de transferir para o Minecraft. Para instalar manualmente, use `edit diskdesk.lua` e `edit diskdesk_services.lua`, transfira os respectivos conteúdos e salve pelo menu Ctrl. Quem usa a versão anterior precisa substituir `diskdesk.lua` e adicionar `diskdesk_services.lua`.
+O pacote `DiskDesk-3.zip` contém o instalador, os três módulos e este guia. Extraia no computador real antes de transferir para o Minecraft. Quem instala manualmente deve copiar ou atualizar os três módulos juntos; é mais simples executar o instalador atualizado.
 
 Execute no CraftOS:
 
@@ -46,7 +42,7 @@ Recomendado: **Advanced Computer** para as cores. Tela mínima 30×12; barra lat
 
 ## Interface e controles
 
-Clique seleciona; duplo clique abre. Botão direito mostra ações do arquivo. O botão **A: menu** no rodapé dá acesso às funções sem precisar memorizar atalhos. O menu A está organizado por categorias. As janelas aceitam clique, setas e Enter; **F1** ou o botão **Voltar** fecha a janela sem encerrar o programa. Esc pode fechar a tela do computador no próprio Minecraft, por isso não é necessário no DiskDesk. Confirmações também aceitam **s** ou **n**.
+Clique seleciona; duplo clique abre. Botão direito mostra ações do arquivo. O botão **A: menu** no rodapé dá acesso às funções sem precisar memorizar atalhos. O menu A está organizado por categorias e os menus possuem borda ciano. As janelas aceitam clique, setas e Enter; **F1** ou o botão **Voltar** fecha a janela sem encerrar o programa. Esc pode fechar a tela do computador no próprio Minecraft, por isso não é necessário no DiskDesk. Confirmações também aceitam **s** ou **n**.
 
 | Tecla | Ação |
 |---|---|
@@ -85,7 +81,7 @@ Se faltar espaço ou houver falha, a origem fica preservada enquanto a cópia n�
 
 ## RAID e espelhamento automático por arquivos
 
-Use **A → RAID e backup → Configurar / consultar RAID** ou **I**. Escolha o modo, o disco principal e os destinos:
+Use **A → RAID e backup → Espelhamento automático RAID 1** ou **I**. Escolha o modo, o disco principal e os destinos. Na seleção múltipla, marque os discos com clique ou Enter e escolha **Confirmar**:
 
 - **RAID 1 na raiz:** copia toda a estrutura diretamente para o outro floppy, incluindo arquivos soltos, pastas e histórico de backup. Não cria a pasta `RAID1`.
 - **RAID 1 em pasta:** mantém o modo anterior, usando `RAID1/` no destino e preservando o que está fora dela. Não replica `.diskdesk-backups`.
@@ -101,13 +97,41 @@ A atualização prepara e verifica uma cópia completa antes da publicação. O 
 
 Os registros e diretórios `.diskdesk-raid-*` permitem recuperar uma publicação interrompida na próxima sincronização. Não os altere manualmente enquanto o conjunto estiver ativo. Se não houver registro válido para recuperar, o programa interrompe a operação e exige conferência manual. Mantenha os discos conectados durante a cópia.
 
-Para recuperar após perder o principal, copie os dados de um espelho para outro disco: da raiz ou de `RAID1/`, conforme o modo. Não há promoção automática, unidade virtual, RAID em blocos, RAID 0 ou JBOD. Desativar o espelhamento mantém os dados já gravados.
+Para recuperar após perder o principal, copie os dados de um espelho para outro disco: da raiz ou de `RAID1/`, conforme o modo. Não há promoção automática nem unidade virtual. Desativar o espelhamento mantém os dados já gravados. Os outros níveis de RAID estão no painel de conjuntos descrito a seguir.
+
+## Conjuntos RAID 0, 1, 5, 6 e 1+0
+
+**A → RAID e backup → Conjuntos RAID** guarda uma versão do arquivo ou pasta selecionado em blocos distribuídos pelos disquetes. É armazenamento próprio do DiskDesk: não monta uma unidade virtual do CraftOS, não altera a API `fs` e não sincroniza alterações posteriores automaticamente. Para guardar alterações, crie um novo conjunto; o anterior permanece disponível.
+
+| Modo | Discos | Dados úteis aproximados* | Perdas recuperáveis |
+|---|---|---|---|
+| RAID 0 | 2 a 8 | N × capacidade do menor disco | Nenhuma; precisa de todos os membros |
+| RAID 1 | 2 a 8 | Capacidade do menor disco | Até N−1 discos |
+| RAID 5 | 3 a 8 | (N−1) × capacidade do menor disco | Qualquer disco isolado |
+| RAID 6 | 4 a 8 | (N−2) × capacidade do menor disco | Quaisquer dois discos |
+| RAID 1+0 | 4, 6 ou 8 | (N÷2) × capacidade do menor disco | Um por par; perder os dois de um par impede restaurar |
+
+*Antes dos índices, arredondamento dos blocos e arquivos já presentes nos discos. O conteúdo original de cada conjunto continua limitado a 512 KiB e 1024 itens pela compactação DDZ.
+
+1. Selecione um arquivo ou pasta no explorador.
+2. Abra **Conjuntos RAID → Guardar item em novo conjunto** e escolha o nível.
+3. Marque vários disquetes com Enter ou clique e use **Confirmar**. Use Disk Drives conectados ao computador; para mais drives, uma [rede de modems com fio](https://tweaked.cc/module/peripheral.html#referencing-peripherals) permite disponibilizar periféricos remotos.
+4. Confira IDs, espaço por disco e, no RAID 1+0, a ordem dos pares. Confirme e aguarde a verificação.
+5. Para recuperar, abra a pasta onde quer salvar e use **Abrir / recuperar conjunto → Restaurar nesta pasta**. Informe o nome de uma pasta nova.
+
+Os originais e outros arquivos dos disquetes são preservados. Cada conjunto fica em `.diskdesk-arrays/<identificador>/`, com índice repetido e um arquivo de blocos por membro. Blocos têm 1024 bytes; RAID 5 usa paridade XOR rotativa, RAID 6 usa paridades P/Q em GF(256), e RAID 1+0 distribui os dados entre pares espelhados. A implementação matemática de P/Q segue os princípios descritos em [The mathematics of RAID-6](https://www.kernel.org/pub/linux/kernel/people/hpa/raid6.pdf). O formato em disco é próprio e não é compatível com arrays Linux.
+
+**Ver discos / integridade** valida tamanho e checksum de cada membro. Um arquivo de blocos corrompido conta como um disco perdido. Havendo redundância suficiente, **Reconstruir disco perdido** grava o membro em um disquete substituto e verifica o resultado. O substituto precisa estar conectado e não pode conter esse mesmo conjunto. A identificação do novo membro fica nele; não depende da configuração do computador original.
+
+Mantenha os discos conectados até terminar. A criação prepara todos os membros antes de publicar. Se houver interrupção, podem restar diretórios `.partial` ou um conjunto incompleto; versões anteriores e originais permanecem intactos. Um conjunto incompleto só pode ser restaurado se houver membros suficientes. Não edite manualmente os índices ou blocos, e mantenha backups independentes dos dados importantes.
 
 ## Compactar e extrair
 
 Selecione um arquivo ou pasta e use **A → Compactar e extrair**, ou **Z** para compactar e **Y** para extrair. O formato próprio **`.ddz`** preserva nomes, estrutura, pastas vazias e dados binários. Pode compactar uma pasta e enviar o pacote por wireless.
 
-Usa LZW quando reduz o tamanho; caso contrário guarda o conteúdo original. Portanto nem todo arquivo fica menor, e o cabeçalho pode aumentar o tamanho final. Não é ZIP nem reduz automaticamente o espaço dos arquivos originais: eles permanecem no disco.
+Agora escreve **DDZ2**, com índice binário, números de tamanho variável e referências às pastas pai, evitando repetir os caminhos completos. Comprime índice e conteúdo juntos com LZW quando isso reduz o tamanho; caso contrário guarda essa estrutura binária sem LZW. Continua extraindo os pacotes DDZ1 antigos; versões antigas do DiskDesk não leem DDZ2.
+
+Arquivos muito pequenos ainda podem aumentar porque o pacote guarda nomes, estrutura e checksum. Um teste com uma pasta `pessoal` e dois arquivos `a.txt`/`b.txt` de 8 e 9 bytes verifica que o pacote fica abaixo de 80 bytes, em vez de centenas. O tamanho exato depende dos nomes e do conteúdo. A barra de status informa os tamanhos de entrada/saída e avisa quando o pacote inclui mais bytes de índice do que economizou. Não é ZIP nem remove os originais.
 
 A extração valida caminhos, tamanho e checksum antes de publicar em uma **pasta nova**, sem sobrescrever arquivos existentes. Limites: 512 KiB de conteúdo descompactado, 1024 entradas e cabeçalho de 128 KiB. Espaço adicional é necessário para o pacote ou a extração. Falhas podem deixar um arquivo ou pasta `.partial`.
 
@@ -164,6 +188,6 @@ Conecte um **Speaker** para o acorde agudo ao inserir disco e grave ao retirar. 
 
 Visualização e impressão aceitam textos até 128 KiB; não interpretam imagens ou PDFs. A interface usa o terminal do computador, não monitor externo. Binários podem ser copiados, incluídos no backup e transferidos por wireless.
 
-Testes com Lua e APIs simuladas incluem dois computadores trocando mensagens e perda de pacotes. A prévia vem das escritas reais no terminal simulado, com fonte aproximada. Ainda é necessário validar no Minecraft com periféricos reais.
+Testes com Lua e APIs simuladas incluem transferência com perda de pacotes, DDZ1/DDZ2, discos trocados durante gravação, publicação interrompida, reconstrução em substitutos e todas as duplas de discos ausentes em um RAID 6 de oito membros. RAID 1+0 também testa perdas dentro do mesmo par e entre pares distintos. A prévia vem das escritas reais no terminal simulado, com fonte aproximada. Ainda é necessário validar no Minecraft com periféricos reais.
 
 Referências: [disquetes](https://tweaked.cc/module/disk.html), [arquivos](https://tweaked.cc/module/fs.html), [impressora](https://tweaked.cc/peripheral/printer.html), [Speaker](https://tweaked.cc/peripheral/speaker.html), [modem](https://tweaked.cc/peripheral/modem.html).
