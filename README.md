@@ -7,8 +7,10 @@ Interface escura com destaque ciano, barra lateral de unidades, ícones, busca e
 
 ### Instalador em um arquivo (recomendado)
 
-Use no computador**`wget run https://raw.githubusercontent.com/IcRyn/DiskDesk/main/instalar_diskdesk.lua`**
+Use no computador: `wget run https://raw.githubusercontent.com/IcRyn/DiskDesk/main/instalar_diskdesk.lua`
+
 ou
+
 Transfira apenas **`instalar_diskdesk.lua`** para o computador do jogo ou para um disquete e execute:
 
 ```text
