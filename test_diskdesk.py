@@ -220,6 +220,38 @@ syncCalls=0
 serviceOverride=function(m) m.raidSync=function() syncCalls=syncCalls+1; return 'Sincronizado' end end
 events[#events+1]={'timer',1}; char('n'); answer('sincronizada'); char('q')
 ''', "assert(syncCalls==3 and files.sincronizada=='dir')")
+test('RAID6 indicator discovers five members and reports losses and return', '''
+missingCount=0; seenStates={}
+arraySource=[=[return function() return {
+  list=function() return missingCount==5 and {} or {{id='set6',mode='6',n=5}} end,
+  status=function() local missing={}; for i=1,missingCount do missing[i]=i end
+    return {missing=missing,readable=missingCount<=2} end
+} end]=]
+local write=term.write
+term.write=function(s) seenStates[s]=true; write(s) end
+events[#events+1]={'timer',1,apply=function() missingCount=1 end}
+events[#events+1]={'timer',2,apply=function() missingCount=2 end}
+events[#events+1]={'timer',3,apply=function() missingCount=3 end}
+events[#events+1]={'timer',4,apply=function() missingCount=5 end}
+events[#events+1]={'timer',5,apply=function() missingCount=0 end}
+char('q')
+''', '''
+for _,expected in ipairs({'6 Ativo (5/5)','6 Degradado (4/5)','6 Degradado (3/5)',
+  '6 Indisponivel (2/5)','6 Indisponivel (0/5)'}) do
+  local found=false; for text in pairs(seenStates) do if text:find(expected,1,true) then found=true end end
+  assert(found,'Missing indicator: '..expected)
+end
+''')
+test('RAID array indicator refreshes after creating a set', '''
+created=false; sawArray=false
+arraySource=[=[return function() return {
+  list=function() return created and {{id='new6',mode='6',n=5}} or {} end,
+  status=function() return {missing={},readable=true} end
+} end]=]
+local write=term.write
+term.write=function(s) if s:find('6 Ativo (5/5)',1,true) then sawArray=true end; write(s) end
+events[#events+1]={'char','a',apply=function() created=true end}; key('f1'); char('q')
+''', 'assert(sawArray)')
 test('move action and paste use verified service', '''
 serviceOverride=function(m)
   m.moveItem=function(source,target,guard)

@@ -19,6 +19,12 @@ local theme = {bg = colors.black, panel = colors.gray, accent = colors.cyan,
   text = colors.white, muted = colors.lightGray, select = colors.blue}
 local lastClick
 local raidLabel = 'Desativado'
+local raidShort = 'Desativado'
+local arrayService, knownArrays = nil, {}
+local function getArrays()
+  if not arrayService then arrayService=dofile(fs.combine(fs.getDir(shell.getRunningProgram()),'diskdesk_arrays.lua'))(services) end
+  return arrayService
+end
 local function fit(text, width)
   text = tostring(text)
   if #text > width then return width < 3 and text:sub(1, width) or text:sub(1, width - 2) .. '..' end
@@ -174,7 +180,7 @@ local function draw()
       buttons[#buttons+1]={x=1,last=sidebar,y=y,action='source:'..i}
     end
     if H>=13 then
-      put(2,H-5,sidebar-2,'RAID: '..raidLabel,theme.panel,theme.muted)
+      put(2,H-5,sidebar-2,'RAID: '..raidShort,theme.panel,theme.muted)
       put(2,H-4,sidebar-2,muted and 'SOM: mudo' or (deviceCount.speaker>0 and 'SOM: ligado' or 'Sem Speaker'),theme.panel,theme.muted)
     end
   end
@@ -481,7 +487,34 @@ local function syncRaid()
   local ok,result=pcall(services.raidSync)
   if not ok and tostring(result)=='Terminated' then error(result,0) end
   raidLabel=ok and result or 'Pendente'
+  raidShort=raidLabel
   if not ok then status='RAID pendente: '..tostring(result) end
+  local checked,why=pcall(function()
+    local arrays=getArrays()
+    for _,m in ipairs(arrays.list()) do knownArrays[m.id]=m end
+    local count,chosen,severity=0,nil,-1
+    for _,m in pairs(knownArrays) do
+      count=count+1
+      local state=arrays.status(m)
+      local rank=not state.readable and 2 or (#state.missing>0 and 1 or 0)
+      if rank>severity or (rank==severity and m.id>chosen.id) then
+        severity=rank; chosen={id=m.id,mode=m.mode,n=m.n,state=state}
+      end
+    end
+    if chosen then
+      local mode=chosen.mode=='10' and '1+0' or chosen.mode
+      local label=severity==0 and 'Ativo' or (severity==1 and 'Degradado' or 'Indisponivel')
+      raidShort=mode..' '..label
+      local auto=raidLabel~='Desativado' and (' / R1 auto: '..raidLabel) or ''
+      raidLabel=raidShort..' ('..(chosen.n-#chosen.state.missing)..'/'..chosen.n..')'..
+        (count>1 and (' +'..(count-1)..' conj.') or '')..auto
+    end
+  end)
+  if not checked then
+    if tostring(why)=='Terminated' then error(why,0) end
+    raidShort='Verificar'; raidLabel='Falha ao verificar conjuntos'
+    status='RAID: '..tostring(why)
+  end
 end
 local function selectDisks(title,minimum,maximum,excluded,even)
   scan()
@@ -562,7 +595,7 @@ local function raidMenu()
   end
 end
 local function arrayMenu()
-  local arrays=dofile(fs.combine(fs.getDir(shell.getRunningProgram()),'diskdesk_arrays.lua'))(services)
+  local arrays=getArrays()
   local operation=choose('RAID 0 / 1 / 5 / 6 / 1+0',{'Guardar item em novo conjunto','Abrir / recuperar conjunto','Como funcionam os modos'})
   if not operation then return end
   if operation==3 then

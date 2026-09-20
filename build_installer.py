@@ -22,7 +22,7 @@ assert template.count('-- DISKDESK_PAYLOAD') == 1
     template.replace('-- DISKDESK_PAYLOAD', payload), encoding='utf-8', newline='\n')
 
 distribution = ('instalar_diskdesk.lua', 'diskdesk.lua', 'diskdesk_services.lua', 'diskdesk_arrays.lua',
-                'README.md', 'IDEIAS.md', 'GITHUB.md')
+                'README.md', 'IDEIAS.md', 'GITHUB.md', 'preview.png')
 source = distribution + ('build_installer.py', 'installer_template.lua', '.gitignore',
                          'test_diskdesk.py', 'test_services.py', 'test_installer.py', 'test_arrays.py',
                          'render_preview.py')
