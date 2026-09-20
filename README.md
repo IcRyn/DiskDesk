@@ -2,9 +2,15 @@
 
 Interface escura com destaque ciano, barra lateral de unidades, ícones, busca e rodapé simplificado: **D: unidades · A: menu · H: ajuda**. O menu A reúne todas as ações, e o botão direito mostra ações do arquivo. Inclui editor de textos, impressão, backup versionado, restauração e transferência wireless.
 
+![preview](preview.png)
+
 ## Instalar ou atualizar
 
 ### Instalador em um arquivo (recomendado)
+
+Use: `wget run https://raw.githubusercontent.com/IcRyn/DiskDesk/main/instalar_diskdesk.lua`
+
+ou
 
 Transfira apenas **`instalar_diskdesk.lua`** para o computador do jogo ou para um disquete e execute:
 
