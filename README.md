@@ -162,27 +162,3 @@ Visualização e impressão aceitam textos até 128 KiB; não interpretam imagen
 Testes com Lua e APIs simuladas incluem dois computadores trocando mensagens e perda de pacotes. A prévia vem das escritas reais no terminal simulado, com fonte aproximada. Ainda é necessário validar no Minecraft com periféricos reais.
 
 Referências: [disquetes](https://tweaked.cc/module/disk.html), [arquivos](https://tweaked.cc/module/fs.html), [impressora](https://tweaked.cc/peripheral/printer.html), [Speaker](https://tweaked.cc/peripheral/speaker.html), [modem](https://tweaked.cc/peripheral/modem.html).
-
-## Distribuir pelo GitHub ou Pastebin
-
-O passo a passo está em [GITHUB.md](GITHUB.md). O pacote **DiskDesk-GitHub.zip** contém os arquivos para extrair e enviar ao repositório, incluindo o gerador do instalador.
-
-Recomendação: GitHub para manter o projeto, histórico e versões. Publique `instalar_diskdesk.lua` em um repositório público. O instalador já contém todo o programa; quem instala só precisa desse arquivo.
-
-Exemplo se o arquivo estiver na raiz da branch `main` (substitua USUARIO e REPOSITORIO):
-
-```text
-wget run https://raw.githubusercontent.com/USUARIO/REPOSITORIO/main/instalar_diskdesk.lua
-```
-
-Use o link Raw do arquivo, não o endereço da página `github.com/.../blob/...`. Para uma versão fixa, use a tag ou o commit no lugar de `main`. A cada mudança no programa, execute `python build_installer.py` no computador real e publique também o instalador regenerado.
-
-Pastebin também funciona: cole o conteúdo completo de `instalar_diskdesk.lua`, crie o paste e use o ID dele:
-
-```text
-pastebin run CODIGO_DO_PASTE
-```
-
-Os dois comandos precisam de HTTP habilitado no CC: Tweaked e acesso ao domínio. Depois do download, o instalador funciona offline. Sem HTTP, transfira o instalador por disquete.
-
-Comandos conferidos no código oficial do CC: Tweaked: [wget](https://github.com/cc-tweaked/CC-Tweaked/blob/mc-1.21.x/projects/core/src/main/resources/data/computercraft/lua/rom/programs/http/wget.lua) e [pastebin](https://github.com/cc-tweaked/CC-Tweaked/blob/mc-1.21.x/projects/core/src/main/resources/data/computercraft/lua/rom/programs/http/pastebin.lua).
