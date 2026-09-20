@@ -213,6 +213,23 @@ test('backup RAID1 rejects duplicate destination before writing', r'''
 fails(function() M.backupMany(src,{dest,dest}) end,'diferentes')
 assert(not files['disk2/.diskdesk-backups'])
 ''')
+test('computer file backup to multiple disks restores original name and content', r'''
+files['computer.txt']='from computer'
+files.disk3=true; volumes.top={root='disk3',id=30}; local third=M.capture('top')
+local results=M.backupItemMany('computer.txt','Computador / computer.txt','computador-1',{dest,third})
+assert(files[results[1]..'/data/computer.txt']=='from computer')
+assert(files[results[2]..'/data/computer.txt']=='from computer')
+local snapshots=M.snapshots(dest)
+assert(#snapshots==1 and snapshots[1].name:find('Computador / computer.txt',1,true))
+local restored=M.restore(results[1],dest,src)
+assert(files[restored..'/computer.txt']=='from computer')
+''')
+test('selected folder backup preserves top folder and empty descendants', r'''
+files['work']=true; files['work/sub']=true; files['work/sub/empty']=true; files['work/a']='A'
+local result=M.backupItemMany('work','Computador / work','computador-1',{dest})[1]
+assert(files[result..'/data/work']==true and files[result..'/data/work/sub/empty']==true)
+assert(files[result..'/data/work/a']=='A')
+''')
 test('root RAID copies everything and removes extra destination files', RAID + '''
 files['disk/.diskdesk-backups']=true; files['disk/.diskdesk-backups/keep']='history'
 files['disk2/extra']='old unrelated'

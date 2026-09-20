@@ -452,15 +452,32 @@ local function pickDisk(title, exclude, excludedIDs)
   local index = choose(title, labels)
   if index then services.guard(volumes[index]); return volumes[index] end
 end
-local selectDisks
+local selectDisks, pathGuard
 local function backupDisk()
-  if not current().drive then error('Abra o disquete de origem antes de fazer backup.', 0) end
-  local src = services.capture(current().drive)
-  local destinations=selectDisks('Marque os discos de BACKUP',1,8,{[src.id]=true})
+  local item=requireItem()
+  local whole=false
+  if current().drive then
+    local choice=choose('O que deseja copiar?',{'Item selecionado: '..item.name,'Disquete inteiro: '..current().name})
+    if not choice then return end; whole=choice==2
+  end
+  local src=current().drive and services.capture(current().drive) or nil
+  local excluded={}
+  if src then excluded[src.id]=true end
+  if current().virtual then
+    for _,id in ipairs(current().virtual.members) do excluded[id]=true end
+  end
+  if next(excluded)==nil then excluded=nil end
+  local destinations=selectDisks('Marque os discos de BACKUP',1,8,excluded)
   if not destinations then return end
   local ids={}; for _,dest in ipairs(destinations) do ids[#ids+1]='#'..dest.id end
-  if not confirm('Criar a mesma versao do backup de #'..src.id..' nos discos '..table.concat(ids,', ')..'? Backups anteriores serao preservados.') then return end
-  local paths=services.backupMany(src,destinations,progress('Backup RAID 1'))
+  local description=whole and ('disquete #'..src.id) or item.name
+  if not confirm('Criar backup de '..description..' nos discos '..table.concat(ids,', ')..'? Versoes anteriores serao preservadas.') then return end
+  local paths
+  if whole then paths=services.backupMany(src,destinations,progress('Backup completo'))
+  else
+    local sourceID=(src and ('disco-'..src.id) or (current().virtual and ('raid-'..current().virtual.id) or ('computador-'..os.getComputerID())))
+    paths=services.backupItemMany(item.path,current().name..' / '..item.name,sourceID,destinations,pathGuard(item.path),progress('Backup do item'))
+  end
   local results={}; for i,dest in ipairs(destinations) do results[i]='#'..dest.id..': '..paths[i] end
   status='Backup verificado em '..#destinations..' disco(s).'
   local lines={'Backup concluido e verificado em todos os destinos.',''}
@@ -485,7 +502,7 @@ local function restoreDisk()
   status = 'Restauracao concluida.'
   show({'Arquivos verificados e restaurados em:', '', result, '', 'Nenhum arquivo existente foi substituido.'}, ' Restauracao concluida')
 end
-local function pathGuard(target)
+pathGuard=function(target)
   if virtual.isVirtual(target) then return function() virtual.guard(target) end end
   for _, item in ipairs(sources) do
     if item.drive and (target == item.root or target:sub(1, #item.root+1) == item.root .. '/') then
@@ -660,7 +677,8 @@ local helpTopics={
     'L muda o nome do floppy. J ejeta. Speaker conectado toca ao inserir e retirar; U silencia.',
     'Arquivos muito pequenos tambem ocupam espaco de armazenamento.'}},
   {title='Backup em varios discos',text={'B ou A > RAID e backup > Backup em varios discos.',
-    'Abra o disquete de origem, marque de 1 a 8 destinos e confirme.',
+    'Selecione um arquivo ou pasta no computador, disquete ou unidade RAID. Em disquetes, pode escolher a unidade inteira.',
+    'Marque de 1 a 8 disquetes de destino e confirme.',
     'Cada destino recebe uma copia completa, verificada e restauravel de forma independente.',
     'Versoes anteriores permanecem nos destinos. O restaura uma versao para outro disquete.',
     'O backup nao sincroniza exclusoes: isso permite recuperar versoes antigas.',
@@ -732,7 +750,7 @@ local function boot()
   end
 end
 local menus = {
-  file = {{'Abrir / visualizar', 'open'}, {'Novo texto', 't'}, {'Nova pasta', 'n'}, {'Editar texto', 'e'}, {'Imprimir', 'p'}},
+  file = {{'Abrir / visualizar', 'open'}, {'Novo texto', 't'}, {'Nova pasta', 'n'}, {'Editar texto', 'e'}, {'Backup do item selecionado', 'b'}, {'Imprimir', 'p'}},
   edit = {{'C  Copiar', 'c'}, {'M  Mover', 'm'}, {'V  Colar', 'v'}, {'R  Renomear', 'r'}, {'Delete  Excluir...', 'x'}, {'F  Buscar nesta pasta', 'f'}},
   disk = {{'Escolher unidade', 'd'}, {'Criar backup...', 'b'}, {'Restaurar backup...', 'o'}, {'Nome do disquete', 'l'}, {'Ejetar disquete', 'j'}},
   net = {{'Enviar arquivo...', 's'}, {'Receber arquivo...', 'g'}},
@@ -740,7 +758,7 @@ local menus = {
   archive = {{'Compactar arquivo ou pasta (.ddz)','z'}, {'Extrair pacote .ddz','y'}},
   start = {{'[+] Arquivos e organizacao', 'menu:files'}, {'[%] Armazenamento dos discos', 'd'}, {'[=] RAID e backup', 'menu:protect'}, {'[Z] Compactar e extrair', 'menu:archive'}, {'[~] Rede wireless', 'menu:net'}, {'[?] Central de ajuda', 'h'}, {'[x] Sair do DiskDesk', 'q'}},
   files = {{'Criar / editar / imprimir','menu:file'}, {'Copiar / mover / renomear','menu:edit'}, {'Nomear / ejetar disquete','menu:disk'}},
-  context = {{'Abrir', 'open'}, {'Editar', 'e'}, {'Copiar', 'c'}, {'Mover', 'm'}, {'Colar aqui', 'v'}, {'Renomear', 'r'}, {'Imprimir', 'p'}, {'Enviar por wireless', 's'}, {'Excluir...', 'x'}}
+  context = {{'Abrir', 'open'}, {'Editar', 'e'}, {'Copiar', 'c'}, {'Mover', 'm'}, {'Colar aqui', 'v'}, {'Backup...', 'b'}, {'Renomear', 'r'}, {'Imprimir', 'p'}, {'Enviar por wireless', 's'}, {'Excluir...', 'x'}}
 }
 local function action(command)
   if command:match('^menu:') then
@@ -1062,7 +1080,17 @@ function M.snapshots(volume)
       for _, name in ipairs(fs.list(parent)) do
         local path = fs.combine(parent, name)
         if not name:match('%.partial$') and fs.exists(path .. '/manifest') then
-          results[#results + 1] = {path = path, name = 'Disco ' .. id .. ' / ' .. name}
+          local display = 'Origem ' .. id .. ' / ' .. name
+          pcall(function()
+            if fs.getSize(path .. '/manifest') <= 128 * 1024 then
+              local file = open(path .. '/manifest', 'r')
+              local manifest = textutils.unserialize(file.readAll()); close(file)
+              if type(manifest) == 'table' and type(manifest.label) == 'string' and #manifest.label > 0 then
+                display = manifest.label .. ' / ' .. name
+              end
+            end
+          end)
+          results[#results + 1] = {path = path, name = display}
         end
       end
     end
@@ -1602,6 +1630,50 @@ function M.backupMany(src,destinations,progress)
     results[i]=M.backup(src,dest,function(done,total,name)
       if progress then progress(done,total,'Disco '..i..'/'..#destinations..': '..name) end
     end)
+  end
+  return results
+end
+function M.backupItemMany(source,label,sourceID,destinations,sourceGuard,progress)
+  sourceGuard=sourceGuard or function() end
+  sourceGuard()
+  if not fs.exists(source) or fs.isDriveRoot(source) then fail('Selecione um arquivo ou pasta para o backup.') end
+  if not M.safeName(tostring(sourceID)) then fail('Identificador de backup invalido.') end
+  if type(destinations)~='table' or #destinations<1 or #destinations>8 then fail('Escolha de 1 a 8 discos de backup.') end
+  local seen={}
+  for _,dest in ipairs(destinations) do
+    M.guard(dest)
+    if seen[dest.id] then fail('Escolha discos de destino diferentes.') end
+    seen[dest.id]=true
+  end
+  local results={}
+  for destinationIndex,dest in ipairs(destinations) do
+    local function guard() sourceGuard(); M.guard(dest) end
+    local entries,total,base
+    if fs.isDir(source) then
+      entries,total=inventory(source,guard)
+      local top=fs.getName(source)
+      for _,entry in ipairs(entries) do entry.path=fs.combine(top,entry.path) end
+      table.insert(entries,1,{path=top,dir=true})
+      base=fs.getDir(source)
+    else
+      entries={{path=fs.getName(source),dir=false}}; total=fs.getSize(source); base=fs.getDir(source)
+    end
+    room(dest.root,total+(#entries+4)*1024)
+    local final=unique(fs.combine(dest.root,'.diskdesk-backups/'..sourceID..'/'..token()))
+    local staging=final..'.partial'
+    guard(); fs.makeDir(fs.combine(staging,'data'))
+    for i,entry in ipairs(entries) do
+      guard(); local out=fs.combine(staging..'/data',entry.path)
+      if entry.dir then fs.makeDir(out)
+      else entry.size,entry.hash=copyVerified(fs.combine(base,entry.path),out,guard) end
+      if progress then progress(i,#entries,'Disco '..destinationIndex..'/'..#destinations..': '..entry.path) end
+    end
+    local manifest={version=1,source=sourceID,label=label,created=os.epoch('utc'),entries=entries}
+    local encoded=textutils.serialize(manifest)
+    if #encoded>128*1024 then fail('Indice do backup excede 128 KiB.') end
+    local handle=open(staging..'/manifest','w'); local ok,why=pcall(handle.write,encoded); close(handle)
+    if not ok then fail(why) end
+    guard(); fs.move(staging,final); results[destinationIndex]=final
   end
   return results
 end

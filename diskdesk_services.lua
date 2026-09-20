@@ -148,7 +148,17 @@ function M.snapshots(volume)
       for _, name in ipairs(fs.list(parent)) do
         local path = fs.combine(parent, name)
         if not name:match('%.partial$') and fs.exists(path .. '/manifest') then
-          results[#results + 1] = {path = path, name = 'Disco ' .. id .. ' / ' .. name}
+          local display = 'Origem ' .. id .. ' / ' .. name
+          pcall(function()
+            if fs.getSize(path .. '/manifest') <= 128 * 1024 then
+              local file = open(path .. '/manifest', 'r')
+              local manifest = textutils.unserialize(file.readAll()); close(file)
+              if type(manifest) == 'table' and type(manifest.label) == 'string' and #manifest.label > 0 then
+                display = manifest.label .. ' / ' .. name
+              end
+            end
+          end)
+          results[#results + 1] = {path = path, name = display}
         end
       end
     end
@@ -688,6 +698,50 @@ function M.backupMany(src,destinations,progress)
     results[i]=M.backup(src,dest,function(done,total,name)
       if progress then progress(done,total,'Disco '..i..'/'..#destinations..': '..name) end
     end)
+  end
+  return results
+end
+function M.backupItemMany(source,label,sourceID,destinations,sourceGuard,progress)
+  sourceGuard=sourceGuard or function() end
+  sourceGuard()
+  if not fs.exists(source) or fs.isDriveRoot(source) then fail('Selecione um arquivo ou pasta para o backup.') end
+  if not M.safeName(tostring(sourceID)) then fail('Identificador de backup invalido.') end
+  if type(destinations)~='table' or #destinations<1 or #destinations>8 then fail('Escolha de 1 a 8 discos de backup.') end
+  local seen={}
+  for _,dest in ipairs(destinations) do
+    M.guard(dest)
+    if seen[dest.id] then fail('Escolha discos de destino diferentes.') end
+    seen[dest.id]=true
+  end
+  local results={}
+  for destinationIndex,dest in ipairs(destinations) do
+    local function guard() sourceGuard(); M.guard(dest) end
+    local entries,total,base
+    if fs.isDir(source) then
+      entries,total=inventory(source,guard)
+      local top=fs.getName(source)
+      for _,entry in ipairs(entries) do entry.path=fs.combine(top,entry.path) end
+      table.insert(entries,1,{path=top,dir=true})
+      base=fs.getDir(source)
+    else
+      entries={{path=fs.getName(source),dir=false}}; total=fs.getSize(source); base=fs.getDir(source)
+    end
+    room(dest.root,total+(#entries+4)*1024)
+    local final=unique(fs.combine(dest.root,'.diskdesk-backups/'..sourceID..'/'..token()))
+    local staging=final..'.partial'
+    guard(); fs.makeDir(fs.combine(staging,'data'))
+    for i,entry in ipairs(entries) do
+      guard(); local out=fs.combine(staging..'/data',entry.path)
+      if entry.dir then fs.makeDir(out)
+      else entry.size,entry.hash=copyVerified(fs.combine(base,entry.path),out,guard) end
+      if progress then progress(i,#entries,'Disco '..destinationIndex..'/'..#destinations..': '..entry.path) end
+    end
+    local manifest={version=1,source=sourceID,label=label,created=os.epoch('utc'),entries=entries}
+    local encoded=textutils.serialize(manifest)
+    if #encoded>128*1024 then fail('Indice do backup excede 128 KiB.') end
+    local handle=open(staging..'/manifest','w'); local ok,why=pcall(handle.write,encoded); close(handle)
+    if not ok then fail(why) end
+    guard(); fs.move(staging,final); results[destinationIndex]=final
   end
   return results
 end

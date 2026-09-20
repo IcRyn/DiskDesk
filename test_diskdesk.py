@@ -222,6 +222,17 @@ local write=term.write
 term.write=function(s) assert(not s:find('RAID:',1,true)); write(s) end
 char('q')
 ''', 'assert(#snapshots>0)')
+test('backup selected computer file to floppy', '''
+serviceOverride=function(m)
+  m.backupItemMany=function(source,label,sourceID,destinations,guard,update)
+    assert(source=='note.txt' and label=='Computador / note.txt' and sourceID=='computador-7')
+    assert(#destinations==1 and destinations[1].id==42)
+    guard(); update(1,1,'note.txt'); backedUp=true
+    return {'disk/.diskdesk-backups/computador-7/version'}
+  end
+end
+selectText(); char('b'); key('enter'); key('up'); key('enter'); char('s'); key('enter'); char('q')
+''', 'assert(backedUp)')
 test('move action and paste use verified service', '''
 serviceOverride=function(m)
   m.moveItem=function(source,target,guard)

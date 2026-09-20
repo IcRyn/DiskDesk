@@ -24,7 +24,7 @@ Depois, execute **`/diskdesk`** de qualquer pasta (ou `diskdesk` na raiz).
 
 Ao atualizar, a pasta antiga `/diskdesk-app` e o atalho anterior são guardados em `/diskdesk-backup-<identificador>/previous/`. Os arquivos novos são preparados antes de substituir a instalação; se a publicação falhar, tenta restaurar a versão anterior e informa a pasta de recuperação. O instalador não modifica `startup` nem arquivos dos disquetes. Se a energia acabar durante a instalação, consulte essa pasta para recuperação manual.
 
-O instalador ainda precisa ser transferido para o jogo uma vez. Ele ocupa cerca de 124 KiB e cabe por pouco em um floppy vazio de 128 KiB. O download direto é mais simples. Depois de transferido, ele funciona sem HTTP.
+O instalador ainda precisa ser transferido para o jogo uma vez. Ele ocupa cerca de 127 KiB e cabe por pouco em um floppy vazio de 128 KiB. O download direto é mais simples. Depois de transferido, ele funciona sem HTTP.
 
 ### Instalação manual
 
@@ -124,15 +124,15 @@ A extração valida caminhos, tamanho e checksum antes de publicar em uma **past
 
 ## Backup com versões
 
-É um **backup versionado por arquivos, iniciado manualmente**. Cada execução pode copiar o estado atual do disco para vários destinos. Cada destino recebe uma cópia completa e independente, e mantém versões anteriores.
+É um **backup versionado por arquivos, iniciado manualmente**. Pode copiar um arquivo ou pasta selecionado no computador, numa unidade RAID ou num disquete. Em um disquete, também oferece copiar a unidade inteira. Cada execução pode usar vários destinos; cada destino recebe uma cópia completa e independente e mantém versões anteriores.
 
-1. Conecte o disco de origem e de um a oito discos de destino. Dê nomes claros com L.
-2. Abra o disco `Trabalho` na barra lateral ou com D.
+1. Conecte de um a oito discos de destino. Se a origem for outro disquete, conecte-o também. Dê nomes claros com L.
+2. Abra o computador, unidade RAID ou disquete e selecione o arquivo ou pasta. Em disquetes, você poderá escolher a unidade inteira.
 3. Use **A → RAID e backup → Criar backup** ou pressione B.
 4. Marque todos os discos de backup desejados, escolha **Confirmar**, confira os IDs e confirme.
 5. Aguarde todas as cópias e verificações. Mantenha a origem e todos os destinos inseridos.
 
-Inclui **todo o disquete selecionado**, mesmo se estiver em uma subpasta ou usando busca. Preserva estrutura, pastas vazias e conteúdo binário. Cada arquivo copiado é relido e comparado por tamanho e checksum Adler-32. O histórico `.diskdesk-backups` não é incluído em novos backups.
+O modo de unidade inteira inclui todo o disquete, mesmo se estiver numa subpasta ou usando busca. O modo de item inclui somente o arquivo ou a pasta selecionada, mantendo seu nome principal. Ambos preservam estrutura, pastas vazias e conteúdo binário. Cada arquivo copiado é relido e comparado por tamanho e checksum Adler-32. O histórico `.diskdesk-backups` não é incluído em novos backups.
 
 As versões ficam no destino em:
 

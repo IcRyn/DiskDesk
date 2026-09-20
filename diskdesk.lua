@@ -448,15 +448,32 @@ local function pickDisk(title, exclude, excludedIDs)
   local index = choose(title, labels)
   if index then services.guard(volumes[index]); return volumes[index] end
 end
-local selectDisks
+local selectDisks, pathGuard
 local function backupDisk()
-  if not current().drive then error('Abra o disquete de origem antes de fazer backup.', 0) end
-  local src = services.capture(current().drive)
-  local destinations=selectDisks('Marque os discos de BACKUP',1,8,{[src.id]=true})
+  local item=requireItem()
+  local whole=false
+  if current().drive then
+    local choice=choose('O que deseja copiar?',{'Item selecionado: '..item.name,'Disquete inteiro: '..current().name})
+    if not choice then return end; whole=choice==2
+  end
+  local src=current().drive and services.capture(current().drive) or nil
+  local excluded={}
+  if src then excluded[src.id]=true end
+  if current().virtual then
+    for _,id in ipairs(current().virtual.members) do excluded[id]=true end
+  end
+  if next(excluded)==nil then excluded=nil end
+  local destinations=selectDisks('Marque os discos de BACKUP',1,8,excluded)
   if not destinations then return end
   local ids={}; for _,dest in ipairs(destinations) do ids[#ids+1]='#'..dest.id end
-  if not confirm('Criar a mesma versao do backup de #'..src.id..' nos discos '..table.concat(ids,', ')..'? Backups anteriores serao preservados.') then return end
-  local paths=services.backupMany(src,destinations,progress('Backup RAID 1'))
+  local description=whole and ('disquete #'..src.id) or item.name
+  if not confirm('Criar backup de '..description..' nos discos '..table.concat(ids,', ')..'? Versoes anteriores serao preservadas.') then return end
+  local paths
+  if whole then paths=services.backupMany(src,destinations,progress('Backup completo'))
+  else
+    local sourceID=(src and ('disco-'..src.id) or (current().virtual and ('raid-'..current().virtual.id) or ('computador-'..os.getComputerID())))
+    paths=services.backupItemMany(item.path,current().name..' / '..item.name,sourceID,destinations,pathGuard(item.path),progress('Backup do item'))
+  end
   local results={}; for i,dest in ipairs(destinations) do results[i]='#'..dest.id..': '..paths[i] end
   status='Backup verificado em '..#destinations..' disco(s).'
   local lines={'Backup concluido e verificado em todos os destinos.',''}
@@ -481,7 +498,7 @@ local function restoreDisk()
   status = 'Restauracao concluida.'
   show({'Arquivos verificados e restaurados em:', '', result, '', 'Nenhum arquivo existente foi substituido.'}, ' Restauracao concluida')
 end
-local function pathGuard(target)
+pathGuard=function(target)
   if virtual.isVirtual(target) then return function() virtual.guard(target) end end
   for _, item in ipairs(sources) do
     if item.drive and (target == item.root or target:sub(1, #item.root+1) == item.root .. '/') then
@@ -656,7 +673,8 @@ local helpTopics={
     'L muda o nome do floppy. J ejeta. Speaker conectado toca ao inserir e retirar; U silencia.',
     'Arquivos muito pequenos tambem ocupam espaco de armazenamento.'}},
   {title='Backup em varios discos',text={'B ou A > RAID e backup > Backup em varios discos.',
-    'Abra o disquete de origem, marque de 1 a 8 destinos e confirme.',
+    'Selecione um arquivo ou pasta no computador, disquete ou unidade RAID. Em disquetes, pode escolher a unidade inteira.',
+    'Marque de 1 a 8 disquetes de destino e confirme.',
     'Cada destino recebe uma copia completa, verificada e restauravel de forma independente.',
     'Versoes anteriores permanecem nos destinos. O restaura uma versao para outro disquete.',
     'O backup nao sincroniza exclusoes: isso permite recuperar versoes antigas.',
@@ -728,7 +746,7 @@ local function boot()
   end
 end
 local menus = {
-  file = {{'Abrir / visualizar', 'open'}, {'Novo texto', 't'}, {'Nova pasta', 'n'}, {'Editar texto', 'e'}, {'Imprimir', 'p'}},
+  file = {{'Abrir / visualizar', 'open'}, {'Novo texto', 't'}, {'Nova pasta', 'n'}, {'Editar texto', 'e'}, {'Backup do item selecionado', 'b'}, {'Imprimir', 'p'}},
   edit = {{'C  Copiar', 'c'}, {'M  Mover', 'm'}, {'V  Colar', 'v'}, {'R  Renomear', 'r'}, {'Delete  Excluir...', 'x'}, {'F  Buscar nesta pasta', 'f'}},
   disk = {{'Escolher unidade', 'd'}, {'Criar backup...', 'b'}, {'Restaurar backup...', 'o'}, {'Nome do disquete', 'l'}, {'Ejetar disquete', 'j'}},
   net = {{'Enviar arquivo...', 's'}, {'Receber arquivo...', 'g'}},
@@ -736,7 +754,7 @@ local menus = {
   archive = {{'Compactar arquivo ou pasta (.ddz)','z'}, {'Extrair pacote .ddz','y'}},
   start = {{'[+] Arquivos e organizacao', 'menu:files'}, {'[%] Armazenamento dos discos', 'd'}, {'[=] RAID e backup', 'menu:protect'}, {'[Z] Compactar e extrair', 'menu:archive'}, {'[~] Rede wireless', 'menu:net'}, {'[?] Central de ajuda', 'h'}, {'[x] Sair do DiskDesk', 'q'}},
   files = {{'Criar / editar / imprimir','menu:file'}, {'Copiar / mover / renomear','menu:edit'}, {'Nomear / ejetar disquete','menu:disk'}},
-  context = {{'Abrir', 'open'}, {'Editar', 'e'}, {'Copiar', 'c'}, {'Mover', 'm'}, {'Colar aqui', 'v'}, {'Renomear', 'r'}, {'Imprimir', 'p'}, {'Enviar por wireless', 's'}, {'Excluir...', 'x'}}
+  context = {{'Abrir', 'open'}, {'Editar', 'e'}, {'Copiar', 'c'}, {'Mover', 'm'}, {'Colar aqui', 'v'}, {'Backup...', 'b'}, {'Renomear', 'r'}, {'Imprimir', 'p'}, {'Enviar por wireless', 's'}, {'Excluir...', 'x'}}
 }
 local function action(command)
   if command:match('^menu:') then
