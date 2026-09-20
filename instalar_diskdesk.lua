@@ -5,6 +5,11 @@ diskdesk.lua]=], contents=[=[
 -- DiskDesk para CC: Tweaked. Salve no computador como diskdesk.lua.
 local wrap = require('cc.strings').wrap
 local services = dofile(fs.combine(fs.getDir(shell.getRunningProgram()), 'diskdesk_services.lua'))
+local physicalFs=fs
+local volumeFactory=dofile(fs.combine(fs.getDir(shell.getRunningProgram()),'diskdesk_volumes.lua'))
+local virtual=volumeFactory(services,dofile(fs.combine(fs.getDir(shell.getRunningProgram()),'diskdesk_arrays.lua')))
+local fs=virtual.fs
+services.useFilesystem(fs)
 local sources, source, folder = {}, 1, ''
 local entries, selected, scroll = {}, 1, 0
 local clipboard, job
@@ -122,6 +127,10 @@ local function scan()
       end
     end
   end
+  for _,volume in ipairs(virtual.list()) do
+    sources[#sources+1]={name='RAID '..(volume.mode=='10' and '1+0' or volume.mode)..' - '..volume.name,
+      root=virtual.root(volume),key='virtual:'..volume.id,virtual=volume}
+  end
   source = 1
   if old then
     for i, item in ipairs(sources) do
@@ -164,7 +173,8 @@ local function draw()
   end
   line(1, ' [D] DISKDESK / arquivos', theme.accent, colors.black)
   put(W-10,1,10,' ID '..os.getComputerID(),theme.accent,colors.black)
-  line(2, ' '..current().name..' > /'..folder, theme.panel)
+  local unitState=current().virtual and (' ['..virtual.info(current().virtual).text..']') or ''
+  line(2, ' '..current().name..unitState..' > /'..folder, theme.panel)
   local sidebar = W >= 45 and 14 or 0
   listX, listTop, listRows = sidebar+2, 5, H-8
   local listWidth = W-listX
@@ -175,7 +185,7 @@ local function draw()
     local first = math.max(1,source-capacity+1)
     for i=first,math.min(#sources,first+capacity-1) do
       local item,y=sources[i],4+i-first
-      put(2,y,sidebar-2,(item.drive and 'o ' or '# ')..item.name,
+      put(2,y,sidebar-2,(item.virtual and '= ' or (item.drive and 'o ' or '# '))..item.name,
         i==source and theme.select or theme.panel)
       buttons[#buttons+1]={x=1,last=sidebar,y=y,action='source:'..i}
     end
@@ -208,7 +218,7 @@ local function draw()
   local free,capacity=fs.getFreeSpace(path()),fs.getCapacity(path())
   local percent=type(free)=='number' and type(capacity)=='number' and capacity>0
     and math.max(0,math.min(100,math.floor((capacity-free)/capacity*100+0.5))) or nil
-  line(H-1,(percent and (' USO '..percent..'%') or ' USO --')..' | Livre '..sizeLabel(free),theme.panel,theme.muted)
+  line(H-1,(percent and (' USO '..percent..'%') or ' USO --')..' | Livre '..sizeLabel(free)..' / '..sizeLabel(capacity or '--'),theme.panel,theme.muted)
   line(H,'',theme.select)
   local x=1
   x=button(x,H,'D: unidades','d',theme.select)
@@ -278,10 +288,30 @@ local function edit(file)
   local existed = fs.exists(file)
   term.setBackgroundColor(colors.black); term.setTextColor(colors.white); term.clear()
   term.setCursorPos(1, 1)
+  local editorFile=file
+  local draft
+  if virtual.isVirtual(file) then
+    local n=1
+    draft='.diskdesk-edit/'..n
+    while physicalFs.exists(draft) do n=n+1; draft='.diskdesk-edit/'..n end
+    physicalFs.makeDir(draft)
+    editorFile=physicalFs.combine(draft,fs.getName(file))
+    if existed then fs.copy(file,editorFile) end
+    line(1,' RAID: salve e saia do editor para gravar nos discos.',theme.accent,colors.black)
+  end
   -- execute preserves the path as one argument, including spaces in folders.
-  if not shell.execute('/rom/programs/edit.lua', '/' .. file) then
+  if not shell.execute('/rom/programs/edit.lua', '/' .. editorFile) then
     error('O editor falhou. Confira o disco e o espaco livre.', 0)
   end
+  if draft and physicalFs.exists(editorFile) then
+    local ok,why=pcall(function()
+      local input=assert(physicalFs.open(editorFile,'rb')); local data=input.readAll(); input.close()
+      local output,err=fs.open(file,'wb'); if not output then error(err,0) end
+      output.write(data); output.close()
+    end)
+    if not ok then error('Rascunho preservado em /'..editorFile..'. '..tostring(why),0) end
+  end
+  if draft then physicalFs.delete(draft) end
   if not fs.exists(file) then
     status = 'Nao foi salvo. No editor: Ctrl > Save.'
   elseif not existed then
@@ -314,7 +344,8 @@ local function chooseSource()
       if unit then
         local y=3+(row-1)*3
         local bg=i==choice and theme.select or theme.panel
-        line(y,(i==choice and ' > ' or '   ')..unit.name..'  /'..unit.root,bg)
+        local description=unit.virtual and (' / '..virtual.info(unit.virtual).text) or ('  /'..unit.root)
+        line(y,(i==choice and ' > ' or '   ')..unit.name..description,bg)
         local free,capacity=fs.getFreeSpace(unit.root),fs.getCapacity(unit.root)
         local percent=type(free)=='number' and type(capacity)=='number' and capacity>0
           and math.max(0,math.min(100,math.floor((capacity-free)/capacity*100+0.5))) or nil
@@ -456,6 +487,7 @@ local function restoreDisk()
   show({'Arquivos verificados e restaurados em:', '', result, '', 'Nenhum arquivo existente foi substituido.'}, ' Restauracao concluida')
 end
 local function pathGuard(target)
+  if virtual.isVirtual(target) then return function() virtual.guard(target) end end
   for _, item in ipairs(sources) do
     if item.drive and (target == item.root or target:sub(1, #item.root+1) == item.root .. '/') then
       local volume = services.capture(item.drive)
@@ -509,6 +541,20 @@ local function syncRaid()
       raidLabel=raidShort..' ('..(chosen.n-#chosen.state.missing)..'/'..chosen.n..')'..
         (count>1 and (' +'..(count-1)..' conj.') or '')..auto
     end
+    local volumes=virtual.list()
+    if #volumes>0 then
+      local worst,priority=nil,-1
+      for _,volume in ipairs(volumes) do
+        local state=virtual.info(volume)
+        local level=not state.readable and 2 or (state.writable and 0 or 1)
+        if level>priority then worst={volume=volume,state=state}; priority=level end
+      end
+      local volume,state=worst.volume,worst.state
+      raidShort=(volume.mode=='10' and '1+0' or volume.mode)..' '..state.text
+      raidLabel=raidShort..' ('..(#volume.members-#state.missing)..'/'..#volume.members..') unidade'..
+        (#volumes>1 and (' +'..(#volumes-1)) or '')
+    end
+    local note=virtual.notice(); if note then status=note end
   end)
   if not checked then
     if tostring(why)=='Terminated' then error(why,0) end
@@ -557,9 +603,12 @@ local function raidMenu()
     if not state.enabled and selectedAction==1 then
       local selectedMode=choose('Modo de espelhamento',{'RAID 1: direto na raiz','RAID 1: pasta RAID1','RAID 1: varios espelhos (raiz)'})
       if not selectedMode then return end
-      local primary=pickDisk('Escolha o disco PRINCIPAL')
+      local occupied={}
+      for _,volume in ipairs(virtual.list()) do for _,id in ipairs(volume.members) do occupied[id]=true end end
+      local primary=pickDisk('Escolha o disco PRINCIPAL',nil,occupied)
       if not primary then return end
-      local mirrors=selectDisks('Marque os ESPELHOS',1,selectedMode==3 and 8 or 1,{[primary.id]=true})
+      occupied[primary.id]=true
+      local mirrors=selectDisks('Marque os ESPELHOS',1,selectedMode==3 and 8 or 1,occupied)
       if not mirrors then return end
       local mode=selectedMode==2 and 'folder' or 'root'
       local ids={}; for _,unit in ipairs(mirrors) do ids[#ids+1]='#'..unit.id end
@@ -659,6 +708,70 @@ local function arrayMenu()
     end
   end
 end
+local function virtualMenu()
+  local operation=choose('Unidades RAID em tempo real',{'Criar unidade RAID','Gerenciar unidade RAID','Importar unidade dos discos','Como usar'})
+  if not operation then return end
+  if operation==1 then
+    local modeIndex=choose('Tipo da unidade RAID',{'RAID 0 - soma / sem redundancia','RAID 1 - espelho','RAID 5 - paridade simples','RAID 6 - paridade dupla','RAID 1+0 - pares de espelhos'})
+    if not modeIndex then return end
+    local mode=({'0','1','5','6','10'})[modeIndex]
+    local excluded={}
+    for _,volume in ipairs(virtual.list()) do for _,id in ipairs(volume.members) do excluded[id]=true end end
+    local units=selectDisks('Marque os membros da unidade',({2,2,3,4,4})[modeIndex],8,excluded,mode=='10')
+    if not units then return end
+    local name=prompt('Nome da unidade RAID:'); if name=='' then return end
+    local ids={}; for _,unit in ipairs(units) do ids[#ids+1]='#'..unit.id end
+    if not confirm('Criar RAID '..mode..' em '..table.concat(ids,', ')..'? Copie os arquivos para a NOVA unidade em D.'..
+      (mode=='10' and ' Pares seguem essa ordem.' or '')..(mode=='0' and ' Sem redundancia.' or '')) then return end
+    local volume=virtual.create(name,mode,units)
+    scan()
+    for i,unit in ipairs(sources) do if unit.key=='virtual:'..volume.id then switchSource(i); break end end
+    status='Unidade criada. Use C/M e V para copiar/mover para ela.'
+  elseif operation==2 then
+    local list=virtual.list(); if #list==0 then error('Crie ou importe uma unidade RAID primeiro.',0) end
+    local labels={}; for i,volume in ipairs(list) do labels[i]='RAID '..volume.mode..' / '..volume.name end
+    local index=choose('Unidade RAID',labels); if not index then return end
+    local volume=list[index]; local state=virtual.info(volume)
+    local task=choose(volume.name..' / '..state.text,{'Ver capacidade e discos','Verificar arquivos / catalogo','Substituir membro ausente'})
+    if task==1 then
+      local lines={'RAID '..volume.mode..' - '..state.text,'Capacidade util: '..sizeLabel(state.capacity),
+        'Livre para novos dados: '..sizeLabel(state.free),'Conteudo dos arquivos: '..sizeLabel(state.used),
+        'Discos de tamanhos diferentes: limita pelo menor.'}
+      for slot,id in ipairs(volume.members) do lines[#lines+1]='Posicao '..slot..': #'..id..(state.members[slot] and ' conectado' or ' ausente') end
+      lines[#lines+1]='Degradado: leitura; reconstrua antes de gravar.'
+      show(lines,' Unidade RAID')
+    elseif task==2 then
+      local lines,result=virtual.verify(volume); table.insert(lines,1,result)
+      show(lines,' Verificacao RAID')
+    elseif task==3 then
+      if #state.missing==0 then error('Retire o disco defeituoso antes de substitui-lo.',0) end
+      local labels={}; for i,slot in ipairs(state.missing) do labels[i]='Posicao '..slot..' / disco #'..volume.members[slot] end
+      local selectedSlot=choose('Membro ausente',labels); if not selectedSlot then return end
+      local excluded={}; for _,v in ipairs(virtual.list()) do for _,id in ipairs(v.members) do excluded[id]=true end end
+      local dest=pickDisk('Novo disco para reconstruir',nil,excluded); if not dest then return end
+      if not confirm('Reconstruir todos os arquivos da posicao '..state.missing[selectedSlot]..' no disco #'..dest.id..'?') then return end
+      local updated=virtual.rebuild(volume,state.missing[selectedSlot],dest,progress('Reconstruir unidade'))
+      status=virtual.info(updated).writable and 'Unidade reconstruida. Pode gravar novamente.' or 'Membro reconstruido. Ainda faltam outros membros.'
+    end
+  elseif operation==3 then
+    local count=virtual.import(); status=count..' unidade(s) importada(s). Abra com D.'
+  else
+    show({'Crie a unidade e abra-a em D: unidades.',
+      'C/M + V copia/move arquivos para a unidade.',
+      'N/T cria pastas/textos; R renomeia; Delete exclui.',
+      'Dados sao divididos automaticamente, sem compactar.',
+      'Editar: salvar e sair publica o arquivo nos discos.',
+      'RAID 0 soma capacidade dos membros iguais.',
+      'RAID 1 usa espelhos; 5/6 reservam paridade.',
+      'RAID 1+0 usa metade para os espelhos.',
+      'Capacidade considera o menor disco e metadados.',
+      'Degradado permite leitura se houver redundancia.',
+      'Reconstrua membros ausentes antes de gravar.',
+      'Arquivos na raiz fisica do floppy nao sao importados.',
+      'Unidade disponivel dentro do DiskDesk.',
+      'Conjuntos antigos continuam no menu de arquivos.'},' Como usar a unidade RAID')
+  end
+end
 local function archiveAction(extract)
   local item=requireItem()
   if extract and item.dir then error('Selecione um pacote .ddz.',0) end
@@ -676,6 +789,15 @@ local function archiveAction(extract)
   filter=''
 end
 local helpTopics={
+  {title='Unidades RAID em tempo real',text={'A > RAID e backup > Unidades RAID em tempo real. Crie uma unidade e selecione seus discos.',
+    'Abra a nova unidade em D. C/M + V copia ou move para ela; os dados sao divididos ou espelhados automaticamente.',
+    'RAID 0 soma a capacidade util dos discos iguais. RAID 1 espelha. RAID 5/6 reservam 1/2 membros para paridade; 1+0 usa metade para espelhos.',
+    'Os percentuais e o espaco livre atualizam apos cada operacao. A capacidade e limitada pelo menor membro e reserva espaco para indices.',
+    'N/T cria pastas/textos, R renomeia e Delete exclui. No editor, salve e saia para publicar nos discos. Se falhar, o rascunho fica no computador.',
+    'Com membros ausentes, a unidade fica somente leitura se ainda houver redundancia. Reconstrua antes de gravar.',
+    'Um arquivo alterado precisa de espaco para a versao nova antes de liberar a anterior. Falhas podem deixar blocos temporarios.',
+    'Use Gerenciar para verificar ou reconstruir. Importar recupera o catalogo de uma unidade em outro computador.',
+    'Arquivos copiados para a raiz fisica dos floppies continuam fora da unidade. Conjuntos antigos sao arquivos de versoes, em menu separado.'}},
   {title='Primeiros passos',text={'D escolhe computador ou disquete. Clique na unidade da barra lateral para trocar.',
     'Clique seleciona; duplo clique ou Enter abre. Backspace volta uma pasta.',
     'A abre o menu por categorias. Botao direito mostra acoes do item.',
@@ -776,7 +898,7 @@ local menus = {
   edit = {{'C  Copiar', 'c'}, {'M  Mover', 'm'}, {'V  Colar', 'v'}, {'R  Renomear', 'r'}, {'Delete  Excluir...', 'x'}, {'F  Buscar nesta pasta', 'f'}},
   disk = {{'Escolher unidade', 'd'}, {'Criar backup...', 'b'}, {'Restaurar backup...', 'o'}, {'Nome do disquete', 'l'}, {'Ejetar disquete', 'j'}},
   net = {{'Enviar arquivo...', 's'}, {'Receber arquivo...', 'g'}},
-  protect = {{'Espelhamento automatico RAID 1','i'}, {'Conjuntos RAID 0 / 1 / 5 / 6 / 1+0','array'}, {'Criar backup com versoes','b'}, {'Restaurar backup','o'}},
+  protect = {{'Unidades RAID em tempo real','virtual'}, {'Espelhamento automatico RAID 1','i'}, {'Conjuntos RAID (versoes arquivadas)','array'}, {'Criar backup com versoes','b'}, {'Restaurar backup','o'}},
   archive = {{'Compactar arquivo ou pasta (.ddz)','z'}, {'Extrair pacote .ddz','y'}},
   start = {{'[+] Arquivos e organizacao', 'menu:files'}, {'[%] Armazenamento dos discos', 'd'}, {'[=] RAID e backup', 'menu:protect'}, {'[Z] Compactar e extrair', 'menu:archive'}, {'[~] Rede wireless', 'menu:net'}, {'[?] Central de ajuda', 'h'}, {'[x] Sair do DiskDesk', 'q'}},
   files = {{'Criar / editar / imprimir','menu:file'}, {'Copiar / mover / renomear','menu:edit'}, {'Nomear / ejetar disquete','menu:disk'}},
@@ -796,6 +918,7 @@ local function action(command)
   elseif command == 'y' then archiveAction(true)
   elseif command == 'i' then raidMenu()
   elseif command == 'array' then arrayMenu()
+  elseif command == 'virtual' then virtualMenu()
   elseif command == 'b' then backupDisk()
   elseif command == 'o' then restoreDisk()
   elseif command == 's' then sendWireless()
@@ -2075,6 +2198,468 @@ function A.removeData(m,volumes)
   end
 end
 return A
+end
+]=]},
+  {name=[=[
+diskdesk_volumes.lua]=], contents=[=[
+-- DiskDesk-only virtual filesystem. Catalog commits precede reclamation of old blocks.
+-- Every file is an immutable raw striped object; replacing it publishes a new object.
+return function(S,arrayFactory)
+local P=fs
+local A=arrayFactory(S,'.diskdesk-vdata')
+local V={}; local F={}; local registry={}
+local configRoot='.diskdesk-volumes'; local prefix='__diskdesk_raid__'
+local serial=0; local notice
+local maxFile=8*1024*1024-1
+for k,v in pairs(P) do F[k]=v end
+local function fail(s) error(s,0) end
+local function clone(t)
+  if type(t)~='table' then return t end
+  local result={}; for k,v in pairs(t) do result[k]=clone(v) end; return result
+end
+local function norm(path)
+  local parts={}
+  for part in tostring(path):gmatch('[^/]+') do
+    if part=='..' then table.remove(parts) elseif part~='.' and part~='' then parts[#parts+1]=part end
+  end
+  return table.concat(parts,'/')
+end
+local function relative(path)
+  if type(path)~='string' or #path>512 or norm(path)~=path then return false end
+  if path=='' then return true end
+  for part in path:gmatch('[^/]+') do if not S.safeName(part) then return false end end
+  return true
+end
+local function location(path)
+  path=norm(path)
+  if path==prefix then return nil,'',true end
+  local id,rest=path:match('^'..prefix..'/([^/]+)(.*)$')
+  if not id then return nil,nil,false end
+  return registry[id],rest:gsub('^/',''),true
+end
+function V.isVirtual(path) local _,_,v=location(path); return v end
+function V.root(volume) return prefix..'/'..volume.id end
+local function number(n,min,max) return type(n)=='number' and n%1==0 and n>=min and n<=max end
+local function valid(c)
+  if type(c)~='table' or c.version~=1 or type(c.id)~='string' or not c.id:match('^[%w%-]+$') or #c.id>80 or
+    not S.safeName(c.name) or not number(c.seq,1,1e12) or type(c.members)~='table' or
+    not number(c.capacity,1,1e12) or type(c.entries)~='table' then fail('Catalogo da unidade RAID invalido.') end
+  A.plan(1,c.mode,#c.members)
+  local ids={}
+  for _,id in ipairs(c.members) do
+    if not number(id,0,1e12) or ids[id] then fail('Discos do catalogo invalidos.') end
+    ids[id]=true
+  end
+  local count=0
+  for path,e in pairs(c.entries) do
+    count=count+1
+    if count>1024 or not relative(path) or type(e)~='table' or type(e.dir)~='boolean' then fail('Indice da unidade RAID invalido.') end
+    if path~='' and (not c.entries[P.getDir(path)] or not c.entries[P.getDir(path)].dir) then fail('Pasta pai RAID ausente.') end
+    if not e.dir then
+      if not number(e.size,0,maxFile) or type(e.object)~='table' or e.object.mode~=c.mode or
+        e.object.n~=#c.members or e.object.size~=e.size+1 then fail('Objeto da unidade RAID invalido.') end
+      local m=e.object
+      if type(m.id)~='string' or not m.id:match('^[%w%-]+$') or #m.id>80 then fail('Identificador de objeto invalido.') end
+    end
+  end
+  if not c.entries[''] or not c.entries[''].dir then fail('Raiz RAID ausente.') end
+  return c
+end
+local function read(path,limit)
+  if P.getSize(path)>limit then fail('Indice ou arquivo muito grande.') end
+  local f,err=P.open(path,'rb'); if not f then fail(err) end
+  local ok,data=pcall(f.readAll); f.close(); if not ok then fail(data) end
+  if #data>limit then fail('Arquivo cresceu durante leitura.') end
+  return data
+end
+local function checked(path,data)
+  local f,err=P.open(path,'wb'); if not f then fail(err) end
+  local ok,why=pcall(f.write,data); f.close(); if not ok then fail(why) end
+  if read(path,#data)~=data then fail('Gravacao do catalogo RAID nao confere.') end
+end
+local function encode(c)
+  valid(c)
+  local body=textutils.serialize(c)
+  if #body>1024*1024 then fail('Catalogo RAID excede 1 MiB.') end
+  return 'DDV1\n'..S.checksum(body)..'\n'..body
+end
+local function decode(data)
+  local hash,pos=data:match('^DDV1\n(%d+)\n()')
+  if not hash or S.checksum(data:sub(pos))~=tonumber(hash) then fail('Catalogo RAID corrompido.') end
+  return valid(textutils.unserialize(data:sub(pos)))
+end
+local function catalogPath(id) return configRoot..'/'..id..'/catalog' end
+local function replace(path,data,guard)
+  guard=guard or function() end
+  guard(); P.makeDir(P.getDir(path))
+  -- A valid current catalog supersedes an old recovery copy.
+  if P.exists(path..'.previous') then
+    if not P.exists(path) then P.move(path..'.previous',path) else P.delete(path..'.previous') end
+  end
+  if P.exists(path..'.next') then P.delete(path..'.next') end
+  checked(path..'.next',data); guard()
+  if P.exists(path) then P.move(path,path..'.previous') end
+  local ok,why=pcall(P.move,path..'.next',path)
+  if not ok then
+    if not P.exists(path) and P.exists(path..'.previous') then P.move(path..'.previous',path) end
+    fail(why)
+  end
+  -- After this rename the current catalog is committed, even if cleanup fails.
+  if P.exists(path..'.previous') then pcall(P.delete,path..'.previous') end
+end
+local function devices()
+  local found={}
+  for _,name in ipairs(peripheral.getNames()) do
+    if peripheral.hasType(name,'drive') and disk.getMountPath(name) then
+      local unit=S.capture(name); found[unit.id]=unit
+    end
+  end
+  return found
+end
+local function members(c,requireAll)
+  local found=devices(); local result={}; local missing={}
+  for i,id in ipairs(c.members) do
+    result[i]=found[id] or false
+    if not result[i] then missing[#missing+1]=i end
+  end
+  if requireAll and #missing>0 then fail('Unidade RAID degradada: reconecte ou reconstrua os membros para gravar.') end
+  return result,missing
+end
+local function readable(c,missing)
+  if c.mode=='0' then return #missing==0 end
+  if c.mode=='1' then return #missing<#c.members end
+  if c.mode=='5' then return #missing<=1 end
+  if c.mode=='6' then return #missing<=2 end
+  local lost={}; for _,slot in ipairs(missing) do lost[slot]=true end
+  for i=1,#c.members,2 do if lost[i] and lost[i+1] then return false end end
+  return true
+end
+function V.info(volume)
+  local c=registry[volume.id] or volume
+  local units,missing=members(c,false); local used=0; local free
+  local _,k=A.plan(1,c.mode,#c.members)
+  for _,unit in ipairs(units) do
+    if unit then local f=P.getFreeSpace(unit.root); if type(f)=='number' then free=math.min(free or f,f) end end
+  end
+  for _,e in pairs(c.entries) do if not e.dir then used=used+e.size end end
+  local available=math.max(0,math.min(c.capacity-used,math.max(0,(free or 0)-8192)*k))
+  local canRead=readable(c,missing)
+  return {missing=missing,members=units,readable=canRead,writable=#missing==0,capacity=c.capacity,free=available,used=used,
+    text=#missing==0 and 'Ativo' or (canRead and 'Degradado' or 'Indisponivel')}
+end
+function V.guard(path)
+  local c,_,virtual=location(path)
+  if virtual and (not c or not V.info(c).readable) then fail('Unidade RAID indisponivel.') end
+end
+local function writeGuard(c,allowDegraded)
+  local units,missing=members(c,not allowDegraded)
+  if allowDegraded and not readable(c,missing) then fail('Membros insuficientes para publicar a reconstrucao.') end
+  local function guard()
+    for _,unit in ipairs(units) do
+      if unit then
+        S.guard(unit); S.assertWritable(unit.root)
+        if P.isReadOnly(unit.root) then fail('Membro RAID somente leitura.') end
+      end
+    end
+  end
+  guard(); return units,guard
+end
+local function backupCatalog(c,units,data)
+  for _,unit in ipairs(units) do
+    if unit then
+      local path=P.combine(unit.root,'.diskdesk-vdata/volume-'..c.id..'/catalog')
+      replace(path,data,function() S.guard(unit) end)
+    end
+  end
+end
+local function commit(c,old,allowDegraded)
+  local units,guard=writeGuard(c,allowDegraded)
+  local data=encode(c)
+  guard(); replace(catalogPath(c.id),data,guard)
+  registry[c.id]=c
+  -- Local catalog is authoritative. A failed redundant catalog write must not roll it back.
+  local ok,why=pcall(backupCatalog,c,units,data)
+  if not ok then
+    if tostring(why)=='Terminated' then fail(why) end
+    notice='Dados salvos; copia do catalogo pendente. Use Verificar unidade.'
+    return
+  end
+  if old then
+    local live={}; for _,e in pairs(c.entries) do if e.object then live[e.object.id]=true end end
+    for _,e in pairs(old.entries) do
+      if e.object and not live[e.object.id] then
+        local cleaned,err=pcall(A.removeData,e.object,units)
+        if not cleaned then
+          if tostring(err)=='Terminated' then fail(err) end
+          notice='Dados salvos; sobraram blocos antigos nos discos.'
+        end
+      end
+    end
+  end
+end
+function V.list()
+  local out={}; for _,c in pairs(registry) do out[#out+1]=c end
+  table.sort(out,function(a,b) return a.id<b.id end); return out
+end
+function V.notice() local text=notice; notice=nil; return text end
+function V.create(name,mode,units)
+  if P.exists(prefix) then fail('Nome reservado ocupado no computador: '..prefix) end
+  if not S.safeName(name) then fail('Nome da unidade invalido.') end
+  local _,k=A.plan(1,mode,#units); local ids,seen,minCapacity={},{},nil
+  for _,unit in ipairs(units) do
+    S.guard(unit); S.assertWritable(unit.root)
+    local auto=S.raidStatus()
+    if auto.enabled then
+      if auto.primaryID==unit.id then fail('Desative o espelhamento antigo antes de usar seu disco principal numa unidade virtual.') end
+      for _,id in ipairs(auto.mirrorIDs or {}) do if id==unit.id then fail('Disco ja usado pelo espelhamento automatico.') end end
+    end
+    if seen[unit.id] then fail('Selecione discos diferentes.') end; seen[unit.id]=true
+    for _,c in pairs(registry) do for _,id in ipairs(c.members) do if id==unit.id then fail('Disco #'..id..' ja pertence a outra unidade virtual.') end end end
+    local capacity=P.getCapacity(unit.root)
+    if type(capacity)~='number' or capacity<=8192 then fail('Capacidade do disco indisponivel ou muito pequena.') end
+    minCapacity=math.min(minCapacity or capacity,capacity); ids[#ids+1]=unit.id
+  end
+  serial=serial+1
+  local id=tostring(os.getComputerID())..'-'..tostring(os.epoch('utc'))..'-v'..serial
+  if registry[id] or P.exists(configRoot..'/'..id) then fail('Identificador ocupado; tente novamente.') end
+  local c={version=1,id=id,name=name,mode=mode,members=ids,capacity=k*(minCapacity-8192),seq=1,entries={['']={dir=true}}}
+  commit(c); return c
+end
+local function need(path)
+  local c,rel,virtual=location(path)
+  if not virtual or not c then fail('Unidade virtual nao encontrada.') end
+  if not relative(rel) then fail('Caminho RAID invalido ou muito longo.') end
+  return c,rel
+end
+local function rawProtected(path)
+  path='/'..norm(path)..'/'
+  return path:find('/.diskdesk-vdata/',1,true) or path:find('/.diskdesk-volumes/',1,true)
+end
+local function rawWritable(path) if rawProtected(path) then fail('Arquivos internos da unidade RAID sao protegidos.') end end
+function F.exists(path)
+  local c,rel,v=location(path)
+  if v then return norm(path)==prefix or (c~=nil and c.entries[rel]~=nil) end
+  return P.exists(path)
+end
+function F.isDir(path)
+  local c,rel,v=location(path)
+  if v then return norm(path)==prefix or (c~=nil and c.entries[rel]~=nil and c.entries[rel].dir) end
+  return P.isDir(path)
+end
+function F.isDriveRoot(path)
+  local c,rel,v=location(path)
+  if v then return c~=nil and rel=='' end
+  return P.isDriveRoot(path)
+end
+function F.isReadOnly(path)
+  local c,_,v=location(path)
+  if v then return not c or not V.info(c).writable end
+  return rawProtected(path) and true or P.isReadOnly(path)
+end
+function F.getCapacity(path)
+  local c,_,v=location(path); if v then return c and c.capacity or 0 end
+  return P.getCapacity(path)
+end
+function F.getFreeSpace(path)
+  local c,_,v=location(path); if v then return c and V.info(c).free or 0 end
+  return P.getFreeSpace(path)
+end
+function F.getSize(path)
+  local c,rel,v=location(path)
+  if v then if not c or not c.entries[rel] then fail('Arquivo nao encontrado.') end; return c.entries[rel].size or 0 end
+  return P.getSize(path)
+end
+function F.list(path)
+  if norm(path)==prefix then local ids={}; for id in pairs(registry) do ids[#ids+1]=id end; table.sort(ids); return ids end
+  local c,rel,v=location(path)
+  if not v then return P.list(path) end
+  if not c or not c.entries[rel] or not c.entries[rel].dir then fail('Pasta RAID nao encontrada.') end
+  local out={}
+  for key in pairs(c.entries) do if key~=rel and P.getDir(key)==rel then out[#out+1]=P.getName(key) end end
+  table.sort(out); return out
+end
+function F.makeDir(path)
+  if not V.isVirtual(path) then rawWritable(path); return P.makeDir(path) end
+  local c,rel=need(path); writeGuard(c)
+  if c.entries[rel] then if not c.entries[rel].dir then fail('Ja existe um arquivo nesse caminho.') end; return end
+  local next=clone(c); next.seq=c.seq+1
+  local part=''
+  for name in rel:gmatch('[^/]+') do
+    part=P.combine(part,name)
+    if next.entries[part] and not next.entries[part].dir then fail('Arquivo no caminho da pasta.') end
+    next.entries[part]={dir=true}
+  end
+  commit(next,c)
+end
+local function contents(path)
+  local c,rel=need(path); V.guard(path)
+  local entry=c.entries[rel]; if not entry or entry.dir then fail('Arquivo RAID nao encontrado.') end
+  local payload=A.readData(entry.object)
+  if #payload~=entry.size+1 or payload:sub(1,1)~='\0' then fail('Conteudo RAID invalido.') end
+  return payload:sub(2)
+end
+local function save(path,data,expectedSeq)
+  local c,rel=need(path); local units,guard=writeGuard(c)
+  if expectedSeq and c.seq~=expectedSeq then fail('Unidade mudou durante a edicao. Reabra o arquivo.') end
+  if #data>maxFile then fail('Arquivo excede limite de 8 MiB.') end
+  if rel=='' or (c.entries[rel] and c.entries[rel].dir) then fail('Destino e uma pasta.') end
+  local parent=c.entries[P.getDir(rel)]
+  if not parent or not parent.dir then fail('Pasta de destino nao existe.') end
+  local next=clone(c); next.seq=c.seq+1
+  -- No compression: a normal file is striped immediately, with the selected redundancy.
+  local object=A.create('\0'..data,P.getName(rel),c.mode,units)
+  guard(); next.entries[rel]={dir=false,size=#data,object=object}
+  commit(next,c)
+end
+function F.open(path,mode)
+  if not V.isVirtual(path) then
+    if mode and mode:sub(1,1)~='r' then rawWritable(path) end
+    return P.open(path,mode)
+  end
+  local writing=mode=='w' or mode=='wb' or mode=='a' or mode=='ab'
+  if not writing and mode~='r' and mode~='rb' then return nil,'Modo nao suportado na unidade RAID.' end
+  local ok,c,rel=pcall(need,path); if not ok then return nil,c end
+  local entry=c.entries[rel]
+  if entry and entry.dir then return nil,'Destino e uma pasta.' end
+  if not writing and not entry then return nil,'Arquivo nao encontrado.' end
+  local data=''
+  if not writing or (mode:sub(1,1)=='a' and entry) then
+    local loaded,value=pcall(contents,path); if not loaded then return nil,value end; data=value
+  end
+  if writing then local ready,err=pcall(writeGuard,c); if not ready then return nil,err end end
+  local closed,pos,dirty=false,1,writing and mode:sub(1,1)=='w'
+  local expected=c.seq
+  local function check() if closed then fail('Arquivo fechado.') end end
+  if writing then
+    return {write=function(value)
+      check(); if type(value)=='number' and mode:sub(-1)=='b' then value=string.char(value) else value=tostring(value) end
+      if #data+#value>maxFile then fail('Arquivo excede 8 MiB.') end
+      data=data..value; dirty=true
+    end,writeLine=function(value) check(); data=data..tostring(value)..'\n'; dirty=true end,
+    flush=function() check(); if dirty then save(path,data,expected); expected=select(1,need(path)).seq; dirty=false end end,
+    close=function() if not closed then if dirty then save(path,data,expected) end; closed=true end end}
+  end
+  return {read=function(n)
+    check(); if pos>#data then return nil end
+    if n==nil then local ch=data:sub(pos,pos); pos=pos+1; return mode=='rb' and ch:byte() or ch end
+    local value=data:sub(pos,pos+n-1); pos=pos+#value; return value
+  end,readAll=function() check(); local value=data:sub(pos); pos=#data+1; return value end,
+  readLine=function(trailing)
+    check(); if pos>#data then return nil end
+    local ending=data:find('\n',pos,true); local value=data:sub(pos,ending and (trailing and ending or ending-1) or #data)
+    pos=ending and ending+1 or #data+1; return value
+  end,close=function() closed=true end}
+end
+function F.delete(path)
+  if not V.isVirtual(path) then rawWritable(path); return P.delete(path) end
+  local c,rel=need(path); if rel=='' then fail('Nao exclua a raiz da unidade RAID.') end
+  if not c.entries[rel] then return end
+  local next=clone(c); next.seq=c.seq+1
+  for key in pairs(next.entries) do if key==rel or key:sub(1,#rel+1)==rel..'/' then next.entries[key]=nil end end
+  commit(next,c)
+end
+function F.copy(source,target)
+  if not V.isVirtual(source) and not V.isVirtual(target) then rawWritable(target); return P.copy(source,target) end
+  if F.exists(target) then fail('Destino ja existe.') end
+  source,target=norm(source),norm(target)
+  if source==target or target:sub(1,#source+1)==source..'/' then fail('Destino dentro da propria origem.') end
+  if F.isDir(source) then
+    F.makeDir(target)
+    for _,name in ipairs(F.list(source)) do F.copy(P.combine(source,name),P.combine(target,name)) end
+  else
+    local input,err=F.open(source,'rb'); if not input then fail(err) end
+    local data=input.readAll(); input.close()
+    local output,why=F.open(target,'wb'); if not output then fail(why) end
+    output.write(data); output.close()
+    local check=assert(F.open(target,'rb')); local saved=check.readAll(); check.close()
+    if saved~=data then fail('Copia nao confere.') end
+  end
+end
+function F.move(source,target)
+  local c,from,vs=location(source); local d,to,vd=location(target)
+  if not vs and not vd then rawWritable(source); rawWritable(target); return P.move(source,target) end
+  if F.exists(target) then fail('Destino ja existe.') end
+  if vs and vd and c and d and c.id==d.id then
+    c,from=need(source); local targetVolume; targetVolume,to=need(target)
+    if from=='' or to:sub(1,#from+1)==from..'/' then fail('Movimento invalido.') end
+    if not c.entries[from] or not c.entries[P.getDir(to)] or not c.entries[P.getDir(to)].dir then fail('Origem ou pasta de destino ausente.') end
+    local next=clone(c); next.seq=c.seq+1
+    for key,e in pairs(c.entries) do
+      if key==from or key:sub(1,#from+1)==from..'/' then next.entries[key]=nil; next.entries[to..key:sub(#from+1)]=e end
+    end
+    commit(next,c)
+  else F.copy(source,target); F.delete(source) end
+end
+function V.verify(volume)
+  local c=registry[volume.id]; if not c then fail('Unidade nao encontrada.') end
+  local result={}; local good=true
+  for path,e in pairs(c.entries) do
+    if e.object then
+      local state=A.status(e.object); if #state.missing>0 then good=false end
+      result[#result+1]=path..': '..state.text
+    end
+  end
+  local state=V.info(c)
+  if state.writable then
+    local units=members(c,true); backupCatalog(c,units,encode(c))
+  end
+  return result,good and state.text or 'Verifique os arquivos listados'
+end
+function V.rebuild(volume,slot,dest,progress)
+  local c=registry[volume.id]; if not c or not number(slot,1,#c.members) then fail('Posicao invalida.') end
+  for _,other in pairs(registry) do for _,id in ipairs(other.members) do if id==dest.id then fail('Substituto ja pertence a uma unidade RAID.') end end end
+  local state=V.info(c)
+  if not state.readable then fail('Discos insuficientes para reconstruir.') end
+  if state.members[slot] then fail('Retire o membro que sera substituido antes de reconstruir.') end
+  local count,total=0,0
+  for _,e in pairs(c.entries) do if e.object then total=total+1 end end
+  for path,e in pairs(c.entries) do
+    if e.object then
+      local objectState=A.status(e.object)
+      if not objectState.volumes[slot] or objectState.volumes[slot].id~=dest.id then A.rebuild(e.object,slot,dest) end
+      count=count+1; if progress then progress(count,total,path) end
+    end
+  end
+  local next=clone(c); next.seq=c.seq+1; next.members[slot]=dest.id
+  commit(next,c,true); return next
+end
+function V.import()
+  local candidates={}
+  for _,unit in pairs(devices()) do
+    local base=P.combine(unit.root,'.diskdesk-vdata')
+    if P.exists(base) and P.isDir(base) then
+      for _,name in ipairs(P.list(base)) do
+        if name:match('^volume%-') then
+          local path=P.combine(base,name..'/catalog')
+          if not P.exists(path) and P.exists(path..'.previous') then path=path..'.previous' end
+          local ok,c=pcall(function() return decode(read(path,1024*1024+64)) end)
+          if ok and name=='volume-'..c.id and (not candidates[c.id] or c.seq>candidates[c.id].seq) then candidates[c.id]=c end
+        end
+      end
+    end
+  end
+  local count=0
+  for id,c in pairs(candidates) do
+    if not registry[id] then
+      -- Import only if every referenced file can be read with the available members.
+      for _,e in pairs(c.entries) do if e.object then A.readData(e.object) end end
+      replace(catalogPath(id),encode(c)); registry[id]=c; count=count+1
+    end
+  end
+  return count
+end
+if P.exists(configRoot) then
+  for _,id in ipairs(P.list(configRoot)) do
+    local path=catalogPath(id)
+    if not P.exists(path) and P.exists(path..'.previous') then P.move(path..'.previous',path) end
+    if P.exists(path) then
+      local ok,c=pcall(function() return decode(read(path,1024*1024+64)) end)
+      if ok and c.id==id then registry[id]=c else notice='Catalogo RAID invalido: '..id..'. Preserve os discos e importe em outro computador.' end
+    end
+  end
+end
+V.fs=F
+return V
 end
 ]=]},
   {name=[=[

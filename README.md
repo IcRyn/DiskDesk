@@ -12,31 +12,32 @@ Use: `wget run https://raw.githubusercontent.com/IcRyn/DiskDesk/main/instalar_di
 
 ou
 
-Transfira apenas **`instalar_diskdesk.lua`** para o computador do jogo ou para um disquete e execute:
+Transfira apenas **`instalar_diskdesk.lua`** para o computador do jogo e execute:
 
 ```text
 instalar_diskdesk
 ```
 
-Se estiver no disquete, use o caminho dele, por exemplo `disk/instalar_diskdesk`. Confirme com **s**. O instalador funciona offline: os três módulos Lua já estão embutidos nele. Instala em `/diskdesk-app/`, cria o atalho `/diskdesk.lua`, verifica os arquivos gravados e oferece abrir o programa ao terminar.
+Confirme com **s**. O instalador funciona offline depois de transferido: os quatro módulos Lua já estão embutidos nele. Instala em `/diskdesk-app/`, cria o atalho `/diskdesk.lua`, verifica os arquivos gravados e oferece abrir o programa ao terminar. Use o download acima ou transfira para o computador do jogo; confira o tamanho antes de tentar levar o instalador em um floppy.
 
 Depois, execute **`/diskdesk`** de qualquer pasta (ou `diskdesk` na raiz).
 
 Ao atualizar, a pasta antiga `/diskdesk-app` e o atalho anterior são guardados em `/diskdesk-backup-<identificador>/previous/`. Os arquivos novos são preparados antes de substituir a instalação; se a publicação falhar, tenta restaurar a versão anterior e informa a pasta de recuperação. O instalador não modifica `startup` nem arquivos dos disquetes. Se a energia acabar durante a instalação, consulte essa pasta para recuperação manual.
 
-O instalador ainda precisa ser transferido para o jogo uma vez. Ele pode ser levado em um floppy; não depende de um endereço de download, Pastebin ou HTTP habilitado.
+O instalador ainda precisa ser transferido para o jogo uma vez. Esta versão ultrapassa 128 KiB e pode não caber em um floppy comum. Use o download acima, a transferência de arquivos para o computador do jogo ou a instalação manual dos módulos. Depois de transferido, ele funciona sem HTTP.
 
 ### Instalação manual
 
-Copie **os três arquivos para a mesma pasta do computador do jogo**:
+Copie **os quatro arquivos para a mesma pasta do computador do jogo**:
 
 ```text
 diskdesk.lua
 diskdesk_services.lua
 diskdesk_arrays.lua
+diskdesk_volumes.lua
 ```
 
-O pacote `DiskDesk-3.zip` contém o instalador, os três módulos e este guia. Extraia no computador real antes de transferir para o Minecraft. Quem instala manualmente deve copiar ou atualizar os três módulos juntos; é mais simples executar o instalador atualizado.
+O pacote `DiskDesk-3.zip` contém o instalador, os quatro módulos e este guia. Extraia no computador real antes de transferir para o Minecraft. Quem instala manualmente deve copiar ou atualizar os quatro módulos juntos; é mais simples executar o instalador atualizado.
 
 Execute no CraftOS:
 
@@ -103,7 +104,33 @@ A atualização prepara e verifica uma cópia completa antes da publicação. O 
 
 Os registros e diretórios `.diskdesk-raid-*` permitem recuperar uma publicação interrompida na próxima sincronização. Não os altere manualmente enquanto o conjunto estiver ativo. Se não houver registro válido para recuperar, o programa interrompe a operação e exige conferência manual. Mantenha os discos conectados durante a cópia.
 
-Para recuperar após perder o principal, copie os dados de um espelho para outro disco: da raiz ou de `RAID1/`, conforme o modo. Não há promoção automática nem unidade virtual. Desativar o espelhamento mantém os dados já gravados. Os outros níveis de RAID estão no painel de conjuntos descrito a seguir.
+Para recuperar após perder o principal, copie os dados de um espelho para outro disco: da raiz ou de `RAID1/`, conforme o modo. Esse modo de espelhamento não tem promoção automática nem unidade virtual. Desativá-lo mantém os dados já gravados. Para uma unidade com capacidade conjunta, use o painel descrito a seguir.
+
+## Unidade RAID com capacidade conjunta e atualização durante o uso
+
+Use **A → RAID e backup → Unidades RAID em tempo real → Criar unidade RAID**. Escolha RAID 0, 1, 5, 6 ou 1+0, marque os disquetes e dê um nome. A unidade aparece em **D: unidades**, por exemplo **RAID 0 - Trabalho**.
+
+Copie com **C**, ou marque para mover com **M**, abra essa nova unidade e pressione **V**. Os dados são distribuídos automaticamente durante a gravação, sem compactação. O espaço livre e a porcentagem atualizam quando a operação termina. **N/T** cria pastas/textos, **R** renomeia e **Delete** exclui. O original de um movimento só é removido após a cópia verificada.
+
+| Modo | Mínimo | Capacidade útil antes dos índices | Redundância |
+|---|---|---|---|
+| RAID 0 | 2 | N × tamanho do menor disco | Nenhuma |
+| RAID 1 | 2 | Tamanho do menor disco | Uma cópia em cada membro |
+| RAID 5 | 3 | (N−1) × tamanho do menor disco | Um membro ausente |
+| RAID 6 | 4 | (N−2) × tamanho do menor disco | Dois membros ausentes |
+| RAID 1+0 | 4, quantidade par | (N÷2) × tamanho do menor disco | Um ausente por par |
+
+Até oito membros por unidade. Há uma reserva de 8 KiB por membro para índices; os diretórios e índices adicionais também consomem espaço. Arquivos que já estavam na raiz física dos disquetes reduzem o espaço livre, mas **não entram na unidade automaticamente**. Discos de tamanhos diferentes são limitados pelo menor. Os membros não podem pertencer a duas unidades virtuais locais nem ao espelhamento automático antigo ao criar a unidade.
+
+Ao editar, o DiskDesk abre um rascunho no computador. **Salvar e sair do editor** publica a alteração nos discos. Se a publicação falhar, informa onde o rascunho foi preservado. A versão nova de um arquivo é preparada antes de substituir a anterior, então alterar um arquivo exige espaço temporário para as duas versões. Se a origem de um movimento estiver num membro quase cheio, passe o arquivo pelo computador antes de colocá-lo na unidade, pois a origem só será removida após a cópia verificada. O limite é de 8 MiB menos um byte por arquivo e 1024 entradas de catálogo, incluindo a raiz; a capacidade física geralmente será menor. Pastas com vários arquivos são processadas arquivo por arquivo.
+
+Se faltar um membro, a unidade permite leitura quando a redundância é suficiente e **bloqueia gravações até a reconstrução**. Use **Gerenciar unidade RAID → Substituir membro ausente**. Retire o membro defeituoso e escolha um disquete substituto com espaço suficiente. RAID 6 pode reconstruir os dois membros ausentes em etapas. **Verificar arquivos / catálogo** identifica arquivos com membros ausentes ou corrompidos e atualiza as cópias do catálogo nos discos.
+
+As unidades são gerenciadas **dentro do DiskDesk**; não são montagens globais para outros programas do CraftOS. O catálogo ativo fica em `/.diskdesk-volumes/` e cópias dele ficam nos membros, junto aos blocos em `.diskdesk-vdata/`. O instalador preserva esses dados. **Importar unidade dos discos** recupera a unidade em outro computador usando os catálogos e membros disponíveis. Não use a mesma unidade para gravação simultânea por vários computadores.
+
+Uma falha pode deixar blocos temporários ou antigos ocupando espaço. O programa preserva os arquivos confirmados; não apague os arquivos internos manualmente. Se uma cópia redundante do catálogo falhar, o programa avisa: mantenha o catálogo do computador e use Verificar antes de tentar importar em outra máquina.
+
+Se você já tinha criado um conjunto de arquivo da versão anterior, ele continua no menu abaixo. Para passar seu conteúdo à unidade virtual, restaure os arquivos e copie/mova para a nova unidade; não há conversão automática.
 
 ## Conjuntos RAID 0, 1, 5, 6 e 1+0
 

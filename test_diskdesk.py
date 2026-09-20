@@ -105,6 +105,7 @@ peripheral = {
 shell = {run=function() end, execute=function() return true end,
   getRunningProgram=function() return 'diskdesk.lua' end}
 dofile = function(path)
+  if path:find('diskdesk_volumes.lua',1,true) then return assert(load(volumeSource))() end
   if path:find('diskdesk_arrays.lua',1,true) then return assert(load(arraySource))() end
   local module=assert(load(serviceSource))()
   if serviceOverride then serviceOverride(module) end
@@ -152,6 +153,7 @@ def test(name, setup, check):
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.globals().serviceSource = SERVICES
     lua.globals().arraySource = Path(__file__).with_name('diskdesk_arrays.lua').read_text(encoding='utf-8')
+    lua.globals().volumeSource = Path(__file__).with_name('diskdesk_volumes.lua').read_text(encoding='utf-8')
     lua.execute(MOCK)
     lua.execute(setup)
     lua.execute(SOURCE)
@@ -267,7 +269,7 @@ test('bordered menus fit compact terminal', '''
 screenW=30; screenH=12
 local write=term.write
 term.write=function(s) if s:sub(1,1)=='+' and s:sub(-1)=='+' then borderSeen=true end; write(s) end
-char('a'); key('down'); key('down'); key('enter'); key('down'); key('enter')
+char('a'); key('down'); key('down'); key('enter'); key('down'); key('down'); key('enter')
 key('down'); key('down'); key('enter'); key('enter'); char('q')
 ''', 'assert(borderSeen)')
 test('checkbox selection configures multiple RAID mirrors', '''

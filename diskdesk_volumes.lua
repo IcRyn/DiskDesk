@@ -147,24 +147,29 @@ function V.guard(path)
   local c,_,virtual=location(path)
   if virtual and (not c or not V.info(c).readable) then fail('Unidade RAID indisponivel.') end
 end
-local function writeGuard(c)
-  local units=members(c,true)
+local function writeGuard(c,allowDegraded)
+  local units,missing=members(c,not allowDegraded)
+  if allowDegraded and not readable(c,missing) then fail('Membros insuficientes para publicar a reconstrucao.') end
   local function guard()
     for _,unit in ipairs(units) do
-      S.guard(unit); S.assertWritable(unit.root)
-      if P.isReadOnly(unit.root) then fail('Membro RAID somente leitura.') end
+      if unit then
+        S.guard(unit); S.assertWritable(unit.root)
+        if P.isReadOnly(unit.root) then fail('Membro RAID somente leitura.') end
+      end
     end
   end
   guard(); return units,guard
 end
 local function backupCatalog(c,units,data)
   for _,unit in ipairs(units) do
-    local path=P.combine(unit.root,'.diskdesk-vdata/volume-'..c.id..'/catalog')
-    replace(path,data,function() S.guard(unit) end)
+    if unit then
+      local path=P.combine(unit.root,'.diskdesk-vdata/volume-'..c.id..'/catalog')
+      replace(path,data,function() S.guard(unit) end)
+    end
   end
 end
-local function commit(c,old)
-  local units,guard=writeGuard(c)
+local function commit(c,old,allowDegraded)
+  local units,guard=writeGuard(c,allowDegraded)
   local data=encode(c)
   guard(); replace(catalogPath(c.id),data,guard)
   registry[c.id]=c
@@ -199,6 +204,11 @@ function V.create(name,mode,units)
   local _,k=A.plan(1,mode,#units); local ids,seen,minCapacity={},{},nil
   for _,unit in ipairs(units) do
     S.guard(unit); S.assertWritable(unit.root)
+    local auto=S.raidStatus()
+    if auto.enabled then
+      if auto.primaryID==unit.id then fail('Desative o espelhamento antigo antes de usar seu disco principal numa unidade virtual.') end
+      for _,id in ipairs(auto.mirrorIDs or {}) do if id==unit.id then fail('Disco ja usado pelo espelhamento automatico.') end end
+    end
     if seen[unit.id] then fail('Selecione discos diferentes.') end; seen[unit.id]=true
     for _,c in pairs(registry) do for _,id in ipairs(c.members) do if id==unit.id then fail('Disco #'..id..' ja pertence a outra unidade virtual.') end end end
     local capacity=P.getCapacity(unit.root)
@@ -366,7 +376,7 @@ function F.move(source,target)
   if not vs and not vd then rawWritable(source); rawWritable(target); return P.move(source,target) end
   if F.exists(target) then fail('Destino ja existe.') end
   if vs and vd and c and d and c.id==d.id then
-    c,from=need(source); _,to=need(target)
+    c,from=need(source); local targetVolume; targetVolume,to=need(target)
     if from=='' or to:sub(1,#from+1)==from..'/' then fail('Movimento invalido.') end
     if not c.entries[from] or not c.entries[P.getDir(to)] or not c.entries[P.getDir(to)].dir then fail('Origem ou pasta de destino ausente.') end
     local next=clone(c); next.seq=c.seq+1
@@ -407,7 +417,7 @@ function V.rebuild(volume,slot,dest,progress)
     end
   end
   local next=clone(c); next.seq=c.seq+1; next.members[slot]=dest.id
-  commit(next,c); return next
+  commit(next,c,true); return next
 end
 function V.import()
   local candidates={}

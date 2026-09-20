@@ -1,6 +1,11 @@
 -- DiskDesk para CC: Tweaked. Salve no computador como diskdesk.lua.
 local wrap = require('cc.strings').wrap
 local services = dofile(fs.combine(fs.getDir(shell.getRunningProgram()), 'diskdesk_services.lua'))
+local physicalFs=fs
+local volumeFactory=dofile(fs.combine(fs.getDir(shell.getRunningProgram()),'diskdesk_volumes.lua'))
+local virtual=volumeFactory(services,dofile(fs.combine(fs.getDir(shell.getRunningProgram()),'diskdesk_arrays.lua')))
+local fs=virtual.fs
+services.useFilesystem(fs)
 local sources, source, folder = {}, 1, ''
 local entries, selected, scroll = {}, 1, 0
 local clipboard, job
@@ -118,6 +123,10 @@ local function scan()
       end
     end
   end
+  for _,volume in ipairs(virtual.list()) do
+    sources[#sources+1]={name='RAID '..(volume.mode=='10' and '1+0' or volume.mode)..' - '..volume.name,
+      root=virtual.root(volume),key='virtual:'..volume.id,virtual=volume}
+  end
   source = 1
   if old then
     for i, item in ipairs(sources) do
@@ -160,7 +169,8 @@ local function draw()
   end
   line(1, ' [D] DISKDESK / arquivos', theme.accent, colors.black)
   put(W-10,1,10,' ID '..os.getComputerID(),theme.accent,colors.black)
-  line(2, ' '..current().name..' > /'..folder, theme.panel)
+  local unitState=current().virtual and (' ['..virtual.info(current().virtual).text..']') or ''
+  line(2, ' '..current().name..unitState..' > /'..folder, theme.panel)
   local sidebar = W >= 45 and 14 or 0
   listX, listTop, listRows = sidebar+2, 5, H-8
   local listWidth = W-listX
@@ -171,7 +181,7 @@ local function draw()
     local first = math.max(1,source-capacity+1)
     for i=first,math.min(#sources,first+capacity-1) do
       local item,y=sources[i],4+i-first
-      put(2,y,sidebar-2,(item.drive and 'o ' or '# ')..item.name,
+      put(2,y,sidebar-2,(item.virtual and '= ' or (item.drive and 'o ' or '# '))..item.name,
         i==source and theme.select or theme.panel)
       buttons[#buttons+1]={x=1,last=sidebar,y=y,action='source:'..i}
     end
@@ -204,7 +214,7 @@ local function draw()
   local free,capacity=fs.getFreeSpace(path()),fs.getCapacity(path())
   local percent=type(free)=='number' and type(capacity)=='number' and capacity>0
     and math.max(0,math.min(100,math.floor((capacity-free)/capacity*100+0.5))) or nil
-  line(H-1,(percent and (' USO '..percent..'%') or ' USO --')..' | Livre '..sizeLabel(free),theme.panel,theme.muted)
+  line(H-1,(percent and (' USO '..percent..'%') or ' USO --')..' | Livre '..sizeLabel(free)..' / '..sizeLabel(capacity or '--'),theme.panel,theme.muted)
   line(H,'',theme.select)
   local x=1
   x=button(x,H,'D: unidades','d',theme.select)
@@ -274,10 +284,30 @@ local function edit(file)
   local existed = fs.exists(file)
   term.setBackgroundColor(colors.black); term.setTextColor(colors.white); term.clear()
   term.setCursorPos(1, 1)
+  local editorFile=file
+  local draft
+  if virtual.isVirtual(file) then
+    local n=1
+    draft='.diskdesk-edit/'..n
+    while physicalFs.exists(draft) do n=n+1; draft='.diskdesk-edit/'..n end
+    physicalFs.makeDir(draft)
+    editorFile=physicalFs.combine(draft,fs.getName(file))
+    if existed then fs.copy(file,editorFile) end
+    line(1,' RAID: salve e saia do editor para gravar nos discos.',theme.accent,colors.black)
+  end
   -- execute preserves the path as one argument, including spaces in folders.
-  if not shell.execute('/rom/programs/edit.lua', '/' .. file) then
+  if not shell.execute('/rom/programs/edit.lua', '/' .. editorFile) then
     error('O editor falhou. Confira o disco e o espaco livre.', 0)
   end
+  if draft and physicalFs.exists(editorFile) then
+    local ok,why=pcall(function()
+      local input=assert(physicalFs.open(editorFile,'rb')); local data=input.readAll(); input.close()
+      local output,err=fs.open(file,'wb'); if not output then error(err,0) end
+      output.write(data); output.close()
+    end)
+    if not ok then error('Rascunho preservado em /'..editorFile..'. '..tostring(why),0) end
+  end
+  if draft then physicalFs.delete(draft) end
   if not fs.exists(file) then
     status = 'Nao foi salvo. No editor: Ctrl > Save.'
   elseif not existed then
@@ -310,7 +340,8 @@ local function chooseSource()
       if unit then
         local y=3+(row-1)*3
         local bg=i==choice and theme.select or theme.panel
-        line(y,(i==choice and ' > ' or '   ')..unit.name..'  /'..unit.root,bg)
+        local description=unit.virtual and (' / '..virtual.info(unit.virtual).text) or ('  /'..unit.root)
+        line(y,(i==choice and ' > ' or '   ')..unit.name..description,bg)
         local free,capacity=fs.getFreeSpace(unit.root),fs.getCapacity(unit.root)
         local percent=type(free)=='number' and type(capacity)=='number' and capacity>0
           and math.max(0,math.min(100,math.floor((capacity-free)/capacity*100+0.5))) or nil
@@ -452,6 +483,7 @@ local function restoreDisk()
   show({'Arquivos verificados e restaurados em:', '', result, '', 'Nenhum arquivo existente foi substituido.'}, ' Restauracao concluida')
 end
 local function pathGuard(target)
+  if virtual.isVirtual(target) then return function() virtual.guard(target) end end
   for _, item in ipairs(sources) do
     if item.drive and (target == item.root or target:sub(1, #item.root+1) == item.root .. '/') then
       local volume = services.capture(item.drive)
@@ -505,6 +537,20 @@ local function syncRaid()
       raidLabel=raidShort..' ('..(chosen.n-#chosen.state.missing)..'/'..chosen.n..')'..
         (count>1 and (' +'..(count-1)..' conj.') or '')..auto
     end
+    local volumes=virtual.list()
+    if #volumes>0 then
+      local worst,priority=nil,-1
+      for _,volume in ipairs(volumes) do
+        local state=virtual.info(volume)
+        local level=not state.readable and 2 or (state.writable and 0 or 1)
+        if level>priority then worst={volume=volume,state=state}; priority=level end
+      end
+      local volume,state=worst.volume,worst.state
+      raidShort=(volume.mode=='10' and '1+0' or volume.mode)..' '..state.text
+      raidLabel=raidShort..' ('..(#volume.members-#state.missing)..'/'..#volume.members..') unidade'..
+        (#volumes>1 and (' +'..(#volumes-1)) or '')
+    end
+    local note=virtual.notice(); if note then status=note end
   end)
   if not checked then
     if tostring(why)=='Terminated' then error(why,0) end
@@ -553,9 +599,12 @@ local function raidMenu()
     if not state.enabled and selectedAction==1 then
       local selectedMode=choose('Modo de espelhamento',{'RAID 1: direto na raiz','RAID 1: pasta RAID1','RAID 1: varios espelhos (raiz)'})
       if not selectedMode then return end
-      local primary=pickDisk('Escolha o disco PRINCIPAL')
+      local occupied={}
+      for _,volume in ipairs(virtual.list()) do for _,id in ipairs(volume.members) do occupied[id]=true end end
+      local primary=pickDisk('Escolha o disco PRINCIPAL',nil,occupied)
       if not primary then return end
-      local mirrors=selectDisks('Marque os ESPELHOS',1,selectedMode==3 and 8 or 1,{[primary.id]=true})
+      occupied[primary.id]=true
+      local mirrors=selectDisks('Marque os ESPELHOS',1,selectedMode==3 and 8 or 1,occupied)
       if not mirrors then return end
       local mode=selectedMode==2 and 'folder' or 'root'
       local ids={}; for _,unit in ipairs(mirrors) do ids[#ids+1]='#'..unit.id end
@@ -655,6 +704,70 @@ local function arrayMenu()
     end
   end
 end
+local function virtualMenu()
+  local operation=choose('Unidades RAID em tempo real',{'Criar unidade RAID','Gerenciar unidade RAID','Importar unidade dos discos','Como usar'})
+  if not operation then return end
+  if operation==1 then
+    local modeIndex=choose('Tipo da unidade RAID',{'RAID 0 - soma / sem redundancia','RAID 1 - espelho','RAID 5 - paridade simples','RAID 6 - paridade dupla','RAID 1+0 - pares de espelhos'})
+    if not modeIndex then return end
+    local mode=({'0','1','5','6','10'})[modeIndex]
+    local excluded={}
+    for _,volume in ipairs(virtual.list()) do for _,id in ipairs(volume.members) do excluded[id]=true end end
+    local units=selectDisks('Marque os membros da unidade',({2,2,3,4,4})[modeIndex],8,excluded,mode=='10')
+    if not units then return end
+    local name=prompt('Nome da unidade RAID:'); if name=='' then return end
+    local ids={}; for _,unit in ipairs(units) do ids[#ids+1]='#'..unit.id end
+    if not confirm('Criar RAID '..mode..' em '..table.concat(ids,', ')..'? Copie os arquivos para a NOVA unidade em D.'..
+      (mode=='10' and ' Pares seguem essa ordem.' or '')..(mode=='0' and ' Sem redundancia.' or '')) then return end
+    local volume=virtual.create(name,mode,units)
+    scan()
+    for i,unit in ipairs(sources) do if unit.key=='virtual:'..volume.id then switchSource(i); break end end
+    status='Unidade criada. Use C/M e V para copiar/mover para ela.'
+  elseif operation==2 then
+    local list=virtual.list(); if #list==0 then error('Crie ou importe uma unidade RAID primeiro.',0) end
+    local labels={}; for i,volume in ipairs(list) do labels[i]='RAID '..volume.mode..' / '..volume.name end
+    local index=choose('Unidade RAID',labels); if not index then return end
+    local volume=list[index]; local state=virtual.info(volume)
+    local task=choose(volume.name..' / '..state.text,{'Ver capacidade e discos','Verificar arquivos / catalogo','Substituir membro ausente'})
+    if task==1 then
+      local lines={'RAID '..volume.mode..' - '..state.text,'Capacidade util: '..sizeLabel(state.capacity),
+        'Livre para novos dados: '..sizeLabel(state.free),'Conteudo dos arquivos: '..sizeLabel(state.used),
+        'Discos de tamanhos diferentes: limita pelo menor.'}
+      for slot,id in ipairs(volume.members) do lines[#lines+1]='Posicao '..slot..': #'..id..(state.members[slot] and ' conectado' or ' ausente') end
+      lines[#lines+1]='Degradado: leitura; reconstrua antes de gravar.'
+      show(lines,' Unidade RAID')
+    elseif task==2 then
+      local lines,result=virtual.verify(volume); table.insert(lines,1,result)
+      show(lines,' Verificacao RAID')
+    elseif task==3 then
+      if #state.missing==0 then error('Retire o disco defeituoso antes de substitui-lo.',0) end
+      local labels={}; for i,slot in ipairs(state.missing) do labels[i]='Posicao '..slot..' / disco #'..volume.members[slot] end
+      local selectedSlot=choose('Membro ausente',labels); if not selectedSlot then return end
+      local excluded={}; for _,v in ipairs(virtual.list()) do for _,id in ipairs(v.members) do excluded[id]=true end end
+      local dest=pickDisk('Novo disco para reconstruir',nil,excluded); if not dest then return end
+      if not confirm('Reconstruir todos os arquivos da posicao '..state.missing[selectedSlot]..' no disco #'..dest.id..'?') then return end
+      local updated=virtual.rebuild(volume,state.missing[selectedSlot],dest,progress('Reconstruir unidade'))
+      status=virtual.info(updated).writable and 'Unidade reconstruida. Pode gravar novamente.' or 'Membro reconstruido. Ainda faltam outros membros.'
+    end
+  elseif operation==3 then
+    local count=virtual.import(); status=count..' unidade(s) importada(s). Abra com D.'
+  else
+    show({'Crie a unidade e abra-a em D: unidades.',
+      'C/M + V copia/move arquivos para a unidade.',
+      'N/T cria pastas/textos; R renomeia; Delete exclui.',
+      'Dados sao divididos automaticamente, sem compactar.',
+      'Editar: salvar e sair publica o arquivo nos discos.',
+      'RAID 0 soma capacidade dos membros iguais.',
+      'RAID 1 usa espelhos; 5/6 reservam paridade.',
+      'RAID 1+0 usa metade para os espelhos.',
+      'Capacidade considera o menor disco e metadados.',
+      'Degradado permite leitura se houver redundancia.',
+      'Reconstrua membros ausentes antes de gravar.',
+      'Arquivos na raiz fisica do floppy nao sao importados.',
+      'Unidade disponivel dentro do DiskDesk.',
+      'Conjuntos antigos continuam no menu de arquivos.'},' Como usar a unidade RAID')
+  end
+end
 local function archiveAction(extract)
   local item=requireItem()
   if extract and item.dir then error('Selecione um pacote .ddz.',0) end
@@ -672,6 +785,15 @@ local function archiveAction(extract)
   filter=''
 end
 local helpTopics={
+  {title='Unidades RAID em tempo real',text={'A > RAID e backup > Unidades RAID em tempo real. Crie uma unidade e selecione seus discos.',
+    'Abra a nova unidade em D. C/M + V copia ou move para ela; os dados sao divididos ou espelhados automaticamente.',
+    'RAID 0 soma a capacidade util dos discos iguais. RAID 1 espelha. RAID 5/6 reservam 1/2 membros para paridade; 1+0 usa metade para espelhos.',
+    'Os percentuais e o espaco livre atualizam apos cada operacao. A capacidade e limitada pelo menor membro e reserva espaco para indices.',
+    'N/T cria pastas/textos, R renomeia e Delete exclui. No editor, salve e saia para publicar nos discos. Se falhar, o rascunho fica no computador.',
+    'Com membros ausentes, a unidade fica somente leitura se ainda houver redundancia. Reconstrua antes de gravar.',
+    'Um arquivo alterado precisa de espaco para a versao nova antes de liberar a anterior. Falhas podem deixar blocos temporarios.',
+    'Use Gerenciar para verificar ou reconstruir. Importar recupera o catalogo de uma unidade em outro computador.',
+    'Arquivos copiados para a raiz fisica dos floppies continuam fora da unidade. Conjuntos antigos sao arquivos de versoes, em menu separado.'}},
   {title='Primeiros passos',text={'D escolhe computador ou disquete. Clique na unidade da barra lateral para trocar.',
     'Clique seleciona; duplo clique ou Enter abre. Backspace volta uma pasta.',
     'A abre o menu por categorias. Botao direito mostra acoes do item.',
@@ -772,7 +894,7 @@ local menus = {
   edit = {{'C  Copiar', 'c'}, {'M  Mover', 'm'}, {'V  Colar', 'v'}, {'R  Renomear', 'r'}, {'Delete  Excluir...', 'x'}, {'F  Buscar nesta pasta', 'f'}},
   disk = {{'Escolher unidade', 'd'}, {'Criar backup...', 'b'}, {'Restaurar backup...', 'o'}, {'Nome do disquete', 'l'}, {'Ejetar disquete', 'j'}},
   net = {{'Enviar arquivo...', 's'}, {'Receber arquivo...', 'g'}},
-  protect = {{'Espelhamento automatico RAID 1','i'}, {'Conjuntos RAID 0 / 1 / 5 / 6 / 1+0','array'}, {'Criar backup com versoes','b'}, {'Restaurar backup','o'}},
+  protect = {{'Unidades RAID em tempo real','virtual'}, {'Espelhamento automatico RAID 1','i'}, {'Conjuntos RAID (versoes arquivadas)','array'}, {'Criar backup com versoes','b'}, {'Restaurar backup','o'}},
   archive = {{'Compactar arquivo ou pasta (.ddz)','z'}, {'Extrair pacote .ddz','y'}},
   start = {{'[+] Arquivos e organizacao', 'menu:files'}, {'[%] Armazenamento dos discos', 'd'}, {'[=] RAID e backup', 'menu:protect'}, {'[Z] Compactar e extrair', 'menu:archive'}, {'[~] Rede wireless', 'menu:net'}, {'[?] Central de ajuda', 'h'}, {'[x] Sair do DiskDesk', 'q'}},
   files = {{'Criar / editar / imprimir','menu:file'}, {'Copiar / mover / renomear','menu:edit'}, {'Nomear / ejetar disquete','menu:disk'}},
@@ -792,6 +914,7 @@ local function action(command)
   elseif command == 'y' then archiveAction(true)
   elseif command == 'i' then raidMenu()
   elseif command == 'array' then arrayMenu()
+  elseif command == 'virtual' then virtualMenu()
   elseif command == 'b' then backupDisk()
   elseif command == 'o' then restoreDisk()
   elseif command == 's' then sendWireless()

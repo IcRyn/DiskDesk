@@ -25,6 +25,7 @@ def test(name, before, check):
     lua.globals().expectedMain = (root / 'diskdesk.lua').read_text(encoding='utf-8')
     lua.globals().expectedService = (root / 'diskdesk_services.lua').read_text(encoding='utf-8')
     lua.globals().expectedArrays = (root / 'diskdesk_arrays.lua').read_text(encoding='utf-8')
+    lua.globals().expectedVolumes = (root / 'diskdesk_volumes.lua').read_text(encoding='utf-8')
     lua.execute(base + setup + before)
     lua.execute(installer)
     lua.execute(check)
@@ -34,17 +35,22 @@ test('fresh installation matches source bytes', '', '''
 assert(files['diskdesk-app/diskdesk.lua']==expectedMain)
 assert(files['diskdesk-app/diskdesk_services.lua']==expectedService)
 assert(files['diskdesk-app/diskdesk_arrays.lua']==expectedArrays)
+assert(files['diskdesk-app/diskdesk_volumes.lua']==expectedVolumes)
 assert(files['diskdesk.lua']:find('/diskdesk-app/diskdesk.lua',1,true))
 assert(not files['diskdesk-backup-1000'])
 ''')
 test('update preserves previous installation', '''
 files['diskdesk-app']=true; files['diskdesk-app/diskdesk.lua']='old app'
 files['diskdesk.lua']='old launcher'; files['startup.lua']='existing startup'
+files['.diskdesk-volumes']=true; files['.diskdesk-volumes/config']='virtual catalog'
+files['disk/.diskdesk-vdata']=true; files['disk/.diskdesk-vdata/shard']='virtual data'
 ''', '''
 assert(files['diskdesk-backup-1000/previous/app/diskdesk.lua']=='old app')
 assert(files['diskdesk-backup-1000/previous/diskdesk.lua']=='old launcher')
 assert(files['diskdesk-app/diskdesk.lua']==expectedMain)
 assert(files['startup.lua']=='existing startup')
+assert(files['.diskdesk-volumes/config']=='virtual catalog')
+assert(files['disk/.diskdesk-vdata/shard']=='virtual data')
 ''')
 test('cancel leaves filesystem alone', "answers={'n'}", "assert(not files['diskdesk-app'] and not files['diskdesk.lua'])")
 test('insufficient space leaves prior version', "free=1; files['diskdesk.lua']='old'",
