@@ -206,7 +206,7 @@ local function draw()
     put(listX,6,listWidth,filter~='' and 'F1: limpar busca' or 'N: pasta | T: texto',theme.bg,theme.muted)
   end
   line(H-3,' '..#entries..' itens',theme.panel,theme.muted)
-  line(H-2,clipboard and ((clipboard.move and ' Mover: ' or ' Copiar: ')..clipboard.name..' | V: colar') or status,theme.bg,colors.yellow)
+  line(H-2,clipboard and ((clipboard.move and ' Mover: ' or ' Copiar: ')..#clipboard.items..' item(ns) | V: colar') or status,theme.bg,colors.yellow)
   local free,capacity=fs.getFreeSpace(path()),fs.getCapacity(path())
   local percent=type(free)=='number' and type(capacity)=='number' and capacity>0
     and math.max(0,math.min(100,math.floor((capacity-free)/capacity*100+0.5))) or nil
@@ -512,33 +512,33 @@ pathGuard=function(target)
   end
   return function() end
 end
-local function sendWireless()
-  local files,checked={},{}
-  for _,item in ipairs(entries) do if not item.dir then files[#files+1]=item end end
-  if #files==0 then error('Esta pasta nao possui arquivos para enviar.',0) end
+local function selectItems(title,filesOnly,maximum)
+  local candidates,checked={},{}
+  for _,item in ipairs(entries) do if not filesOnly or not item.dir then candidates[#candidates+1]=item end end
+  if #candidates==0 then error(filesOnly and 'Esta pasta nao possui arquivos.' or 'Esta pasta esta vazia.',0) end
   local currentItem=entries[selected]
-  for i,item in ipairs(files) do if item==currentItem then checked[i]=true end end
+  for i,item in ipairs(candidates) do if item==currentItem then checked[i]=true end end
   local cursor=1
   while true do
     local chosen,labels={},{}
-    for i,item in ipairs(files) do if checked[i] then chosen[#chosen+1]=item end end
-    labels[1]='Enviar '..#chosen..' arquivo(s)'
-    for i,item in ipairs(files) do labels[i+1]=(checked[i] and '[x] ' or '[ ] ')..item.name..'  '..sizeLabel(fs.getSize(item.path)) end
-    local option=choose('Escolha os arquivos',labels,cursor)
-    if not option then return end
-    cursor=option
+    for i,item in ipairs(candidates) do if checked[i] then chosen[#chosen+1]=item end end
+    labels[1]='Confirmar '..#chosen..' item(ns)'
+    for i,item in ipairs(candidates) do labels[i+1]=(checked[i] and '[x] ' or '[ ] ')..(item.dir and '[+] ' or '')..item.name end
+    local option=choose(title,labels,cursor); if not option then return end; cursor=option
     if option==1 then
-      if #chosen==0 then show({'Marque ao menos um arquivo.'},' Wireless')
-      else
-        services.openWireless()
-        local peer=tonumber(prompt('ID do computador de destino (abra Receber nele):'))
-        if not peer then return end
-        local paths={}; for _,item in ipairs(chosen) do paths[#paths+1]=item.path end
-        services.sendFiles(paths,peer,function() for _,item in ipairs(chosen) do pathGuard(item.path)() end end,progress('Enviar'))
-        status=#paths..' arquivo(s) entregues e verificados no ID '..peer..'.'; return
-      end
+      if #chosen==0 then show({'Marque ao menos um item.'},' Selecao')
+      else return chosen end
+    elseif not checked[option-1] and #chosen>=maximum then show({'Maximo de '..maximum..' itens por operacao.'},' Selecao')
     else checked[option-1]=not checked[option-1] end
   end
+end
+local function sendWireless()
+  local chosen=selectItems('Escolha os arquivos',true,32); if not chosen then return end
+  services.openWireless()
+  local peer=tonumber(prompt('ID do computador de destino (abra Receber nele):')); if not peer then return end
+  local paths={}; for _,item in ipairs(chosen) do paths[#paths+1]=item.path end
+  services.sendFiles(paths,peer,function() for _,item in ipairs(chosen) do pathGuard(item.path)() end end,progress('Enviar'))
+  status=#paths..' arquivo(s) entregues e verificados no ID '..peer..'.'
 end
 local function receiveWireless()
   services.openWireless()
@@ -690,7 +690,7 @@ local helpTopics={
     'Q encerra o DiskDesk e volta ao terminal.'}},
   {title='Arquivos e mover',text={'N cria pasta. T abre um novo texto. E edita o arquivo selecionado.',
     'No editor: Ctrl > Save para salvar e Ctrl > Exit para sair. Nomes com espacos funcionam.',
-    'C marca para copiar; M marca para mover. Abra a pasta de destino e use V para colar.',
+    'C copia e M move: marque ate 64 arquivos/pastas, abra o destino e use V para colar.',
     'Mover verifica a copia antes de excluir a origem. Se falhar, confira a origem e os arquivos .partial.',
     'R renomeia; Delete exclui com confirmacao. F busca nomes; F1 limpa o filtro.'}},
   {title='Discos e armazenamento',text={'USO mostra a porcentagem do disco atual. D abre as barras de cada unidade; vermelho indica 90% ou mais.',
@@ -826,33 +826,50 @@ local function action(command)
     if item.dir then error('Selecione um arquivo.', 0) end
     edit(item.path)
   elseif command == 'c' or command == 'm' then
-    local item = requireItem()
-    if command == 'm' then protected(item) end
-    if fs.isDriveRoot(item.path) then error('Abra a unidade e copie seus itens.', 0) end
-    -- Bind to the actual mount even when browsing /disk from Computador.
-    local owner = current()
-    for _, candidate in ipairs(sources) do
-      if candidate.drive and (item.path == candidate.root or item.path:sub(1, #candidate.root + 1) == candidate.root .. '/') then owner = candidate end
+    local chosen=selectItems(command=='m' and 'Itens para mover' or 'Itens para copiar',false,64)
+    if not chosen then return end
+    local items={}
+    for _,item in ipairs(chosen) do
+      if command=='m' then protected(item) end
+      if fs.isDriveRoot(item.path) then error('Abra a unidade e copie seus itens.',0) end
+      local owner=current()
+      for _,candidate in ipairs(sources) do
+        if candidate.drive and (item.path==candidate.root or item.path:sub(1,#candidate.root+1)==candidate.root..'/') then owner=candidate end
+      end
+      items[#items+1]={path=item.path,name=item.name,owner=owner.key}
     end
-    clipboard = {path = item.path, name = item.name, owner = owner.key, move = command == 'm'}
-    status = (clipboard.move and 'Mover: ' or 'Copiar: ') .. item.name .. '. Destino + V.'
+    clipboard={items=items,move=command=='m'}
+    status=(clipboard.move and 'Mover ' or 'Copiar ')..#items..' item(ns). Destino + V.'
   elseif command == 'v' then
     if not clipboard then error('Use C para copiar primeiro.', 0) end
-    local found = false
-    for _, candidate in ipairs(sources) do if candidate.key == clipboard.owner then found = true end end
-    if not found or not fs.exists(clipboard.path) then error('Origem indisponivel. Copie novamente.', 0) end
-    local dest = fs.combine(path(), clipboard.name)
-    if fs.exists(dest) then dest = newName('Ja existe. Novo nome para a copia:') end
-    if not dest then return end
-    if dest == clipboard.path or dest:sub(1, #clipboard.path + 1) == clipboard.path .. '/' then
-      error('Nao copie uma pasta para dentro dela mesma.', 0)
+    local targets,conflicts={},{ }
+    for i,item in ipairs(clipboard.items) do
+      local found=false
+      for _,candidate in ipairs(sources) do if candidate.key==item.owner then found=true end end
+      if not found or not fs.exists(item.path) then error('Origem indisponivel: '..item.name..'. Selecione novamente.',0) end
+      local dest=fs.combine(path(),item.name)
+      if fs.exists(dest) then conflicts[#conflicts+1]=item.name end
+      if dest==item.path or dest:sub(1,#item.path+1)==item.path..'/' then error('Nao copie uma pasta para dentro dela mesma: '..item.name,0) end
+      targets[i]=dest
     end
-    services.assertWritable(dest)
+    if #conflicts>0 then
+      if #clipboard.items==1 then targets[1]=newName('Ja existe. Novo nome para a copia:'); if not targets[1] then return end
+      else error('Ja existem no destino: '..table.concat(conflicts,', ')..'. Renomeie ou remova antes.',0) end
+    end
+    for _,dest in ipairs(targets) do services.assertWritable(dest) end
     if clipboard.move then
-      local fromGuard,toGuard=pathGuard(clipboard.path),pathGuard(dest)
-      services.moveItem(clipboard.path,dest,function() fromGuard(); toGuard() end)
-      clipboard=nil; status='Movido e verificado.'
-    else fs.copy(clipboard.path, dest); status = 'Copia concluida.' end
+      local count=#clipboard.items
+      while #clipboard.items>0 do
+        local item=clipboard.items[1]; local dest=targets[count-#clipboard.items+1]
+        local fromGuard,toGuard=pathGuard(item.path),pathGuard(dest)
+        services.moveItem(item.path,dest,function() fromGuard(); toGuard() end)
+        table.remove(clipboard.items,1)
+      end
+      clipboard=nil; status=count..' item(ns) movidos e verificados.'
+    else
+      for i,item in ipairs(clipboard.items) do fs.copy(item.path,targets[i]) end
+      status=#clipboard.items..' item(ns) copiados.'
+    end
   elseif command == 'r' then
     local item = requireItem(); protected(item)
     local dest = newName('Novo nome:'); if dest then fs.move(item.path, dest) end

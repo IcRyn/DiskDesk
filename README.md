@@ -90,7 +90,7 @@ Se faltar espaço ou houver falha, a origem fica preservada enquanto a cópia n�
 
 Use **A → RAID e backup → Unidades RAID em tempo real → Criar unidade RAID**. Escolha RAID 0, 1, 5, 6 ou 1+0, marque os disquetes e dê um nome. A unidade aparece em **D: unidades**, por exemplo **RAID 0 - Trabalho**. As listas aceitam roda do mouse e setas quando há mais unidades do que cabe na tela.
 
-Copie com **C**, ou marque para mover com **M**, abra essa nova unidade e pressione **V**. Os dados são distribuídos automaticamente durante a gravação, sem compactação. O espaço livre e a porcentagem atualizam quando a operação termina. **N/T** cria pastas/textos, **R** renomeia e **Delete** exclui. O original de um movimento só é removido após a cópia verificada.
+Use **C** para copiar ou **M** para mover, marque até 64 arquivos e pastas da tela atual, abra o destino e pressione **V**. Isso também funciona entre o computador, disquetes e unidades RAID. Os dados são distribuídos automaticamente durante a gravação, sem compactação. O espaço livre e a porcentagem atualizam quando a operação termina. **N/T** cria pastas/textos, **R** renomeia e **Delete** exclui. O original de cada movimento só é removido após sua cópia ser verificada.
 
 | Modo | Mínimo | Capacidade útil antes dos índices | Redundância |
 |---|---|---|---|

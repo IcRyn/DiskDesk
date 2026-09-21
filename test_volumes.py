@@ -256,7 +256,7 @@ key('enter'); key('enter'); key('enter'); key('down'); key('enter'); key('up'); 
 answer('Trabalho'); char('s')
 -- Return to Computer, select real file, move to the new virtual drive and edit it.
 char('d'); key('up'); key('up'); key('up'); key('enter')
-char('f'); answer('entrada.txt'); char('m')
+char('f'); answer('entrada.txt'); char('m'); key('enter')
 char('d'); key('down'); key('down'); key('down'); key('enter'); char('v')
 char('e'); char('n'); answer('PESSOAL'); char('q')
 ''')

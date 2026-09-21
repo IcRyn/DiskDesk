@@ -163,8 +163,15 @@ def test(name, setup, check):
     print('PASS:', name)
     return lua
 
-test('copy to floppy', "selectText(); char('c'); chooseDisk(); char('v'); char('q')",
+test('copy to floppy', "selectText(); char('c'); key('enter'); chooseDisk(); char('v'); char('q')",
      "assert(files['disk/note.txt']=='hello')")
+test('copy multiple items to floppy', '''
+files['alpha.txt']='A'; files['beta.txt']='B'
+selectText(); char('c')
+key('down'); key('down'); key('down'); key('enter')
+key('up'); key('up'); key('up'); key('enter')
+chooseDisk(); char('v'); char('q')
+''', "assert(files['disk/alpha.txt']=='A' and files['disk/beta.txt']=='B')")
 test('create folder', "chooseDisk(); char('n'); answer('docs'); char('q')",
      "assert(files['disk/docs']=='dir')")
 test('create text inside nested folder with spaces', '''
@@ -205,7 +212,7 @@ test('no speaker', "diskEvent('disk_eject'); diskEvent('disk'); char('q')", "ass
 test('speaker disconnect', "hasSpeaker=true; speakerBroken=true; diskEvent('disk_eject'); char('q')", "assert(#notes==0)")
 test('sound inside help', "hasSpeaker=true; char('h'); diskEvent('disk_eject'); key('enter'); char('q')",
      "assert(#notes==2)")
-test('search', "char('f'); answer('note'); char('c'); chooseDisk(); char('v'); char('q')",
+test('search', "char('f'); answer('note'); char('c'); key('enter'); chooseDisk(); char('v'); char('q')",
      "assert(files['disk/note.txt']=='hello')")
 test('sidebar click', "events[#events+1]={'mouse_click',1,4,5}; char('n'); answer('docs'); char('q')",
      "assert(files['disk/docs']=='dir')")
@@ -240,8 +247,21 @@ serviceOverride=function(m)
     files[target]=files[source]; files[source]=nil; moved=true
   end
 end
-selectText(); char('m'); chooseDisk(); char('v'); char('q')
+selectText(); char('m'); key('enter'); chooseDisk(); char('v'); char('q')
 ''', "assert(moved and files['disk/note.txt']=='hello' and not files['note.txt'])")
+test('move multiple items removes each source after verified copy', '''
+files['alpha.txt']='A'; files['beta.txt']='B'
+serviceOverride=function(m)
+  m.moveItem=function(source,target,guard)
+    guard(); assert(files[source] and not files[target]); files[target]=files[source]; files[source]=nil
+    movedCount=(movedCount or 0)+1
+  end
+end
+selectText(); char('m')
+key('down'); key('down'); key('down'); key('enter')
+key('up'); key('up'); key('up'); key('enter')
+chooseDisk(); char('v'); char('q')
+''', "assert(movedCount==2 and files['disk/alpha.txt']=='A' and files['disk/beta.txt']=='B' and not files['alpha.txt'] and not files['beta.txt'])")
 test('actions menu', "events[#events+1]={'mouse_click',1,15,19}; key('escape'); char('q')", "assert(#snapshots==3)")
 test('context menu', "events[#events+1]={'mouse_click',2,20,6}; key('escape'); char('q')", "assert(#snapshots==3)")
 test('bordered menus fit compact terminal', '''
