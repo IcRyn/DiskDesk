@@ -271,6 +271,14 @@ assert(files['disk2/unpacked/docs/repeated.txt']==files['disk/docs/repeated.txt'
 assert(files['disk2/unpacked/docs/a.bin']==files['disk/docs/a.bin'])
 assert(files['disk2/unpacked/docs/empty']==true)
 ''')
+test('DDZ packs multiple selected files and folders', r'''
+files['disk/docs/empty']=true
+M.compressMany({'disk/root.txt','disk/docs'},'disk2/many.ddz')
+M.extract('disk2/many.ddz','disk2/many')
+assert(files['disk2/many/root.txt']==files['disk/root.txt'])
+assert(files['disk2/many/docs/a.bin']==files['disk/docs/a.bin'])
+assert(files['disk2/many/docs/empty']==true)
+''')
 test('DDZ2 tiny folder has compact metadata and preserves both files', '''
 files['disk/pessoal']=true
 files['disk/pessoal/a.txt']='12345678'; files['disk/pessoal/b.txt']='123456789'

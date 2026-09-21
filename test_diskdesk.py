@@ -167,11 +167,36 @@ test('copy to floppy', "selectText(); char('c'); key('enter'); chooseDisk(); cha
      "assert(files['disk/note.txt']=='hello')")
 test('copy multiple items to floppy', '''
 files['alpha.txt']='A'; files['beta.txt']='B'
+local originalWrite=term.write
+term.write=function(s)
+  if s:find('CONFIRMAR',1,true) then confirmHighlighted=true end
+  if s:find('100%',1,true) then copyProgress=true end
+  originalWrite(s)
+end
 selectText(); char('c')
 key('down'); key('down'); key('down'); key('enter')
 key('up'); key('up'); key('up'); key('enter')
 chooseDisk(); char('v'); char('q')
-''', "assert(files['disk/alpha.txt']=='A' and files['disk/beta.txt']=='B')")
+''', "assert(files['disk/alpha.txt']=='A' and files['disk/beta.txt']=='B' and confirmHighlighted and copyProgress)")
+test('copy warns before writing when destination lacks space', '''
+fs.getFreeSpace=function(p) return p=='disk' and 100 or 10000 end
+local originalWrite=term.write
+term.write=function(s) if s:find('Espaco insuficiente',1,true) then spaceWarning=true end; originalWrite(s) end
+selectText(); char('c'); key('enter'); chooseDisk(); char('v'); key('f1'); char('q')
+''', "assert(spaceWarning and not files['disk/note.txt'])")
+test('compress multiple selected items', '''
+files['alpha.txt']='A'; files['beta.txt']='B'
+serviceOverride=function(m)
+  m.compressMany=function(paths,target,guard)
+    assert(#paths==2 and paths[1]=='alpha.txt' and paths[2]=='beta.txt' and target=='pacote.ddz')
+    guard(); compressedMany=true; return 2,40
+  end
+end
+selectText(); char('z')
+key('down'); key('down'); key('down'); key('enter')
+key('up'); key('up'); key('up'); key('enter')
+answer('pacote'); char('q')
+''', 'assert(compressedMany)')
 test('create folder', "chooseDisk(); char('n'); answer('docs'); char('q')",
      "assert(files['disk/docs']=='dir')")
 test('create text inside nested folder with spaces', '''
