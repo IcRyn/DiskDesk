@@ -1,4 +1,5 @@
 -- DiskDesk para CC: Tweaked. Salve no computador como diskdesk.lua.
+local VERSION='3.1.0'
 local wrap = require('cc.strings').wrap
 local services = dofile(fs.combine(fs.getDir(shell.getRunningProgram()), 'diskdesk_services.lua'))
 local physicalFs=fs
@@ -163,7 +164,7 @@ local function draw()
     buttons[#buttons + 1] = {x=x,last=x+#label-1,y=y,action=command}
     return x + #label + 1
   end
-  line(1, ' [D] DISKDESK / arquivos', theme.accent, colors.black)
+  line(1, ' [D] DISKDESK '..VERSION..' / arquivos', theme.accent, colors.black)
   put(W-10,1,10,' ID '..os.getComputerID(),theme.accent,colors.black)
   local unitState=current().virtual and (' ['..virtual.info(current().virtual).text..']') or ''
   line(2, ' '..current().name..unitState..' > /'..folder, theme.panel)
@@ -783,7 +784,7 @@ local menus = {
   disk = {{'Escolher unidade', 'd'}, {'Criar backup...', 'b'}, {'Restaurar backup...', 'o'}, {'Nome do disquete', 'l'}, {'Ejetar disquete', 'j'}},
   net = {{'Enviar arquivo...', 's'}, {'Receber arquivo...', 'g'}},
   protect = {{'Unidades RAID em tempo real','virtual'}, {'Backup em varios discos','b'}, {'Restaurar backup','o'}},
-  archive = {{'Compactar arquivo ou pasta (.ddz)','z'}, {'Extrair pacote .ddz','y'}},
+  archive = {{'Compactar varios itens (.ddz)','z'}, {'Extrair pacote .ddz','y'}},
   start = {{'[+] Arquivos e organizacao', 'menu:files'}, {'[%] Armazenamento dos discos', 'd'}, {'[=] RAID e backup', 'menu:protect'}, {'[Z] Compactar e extrair', 'menu:archive'}, {'[~] Rede wireless', 'menu:net'}, {'[?] Central de ajuda', 'h'}, {'[x] Sair do DiskDesk', 'q'}},
   files = {{'Criar / editar / imprimir','menu:file'}, {'Copiar / mover / renomear','menu:edit'}, {'Nomear / ejetar disquete','menu:disk'}},
   context = {{'Abrir', 'open'}, {'Editar', 'e'}, {'Copiar', 'c'}, {'Mover', 'm'}, {'Colar aqui', 'v'}, {'Backup...', 'b'}, {'Renomear', 'r'}, {'Imprimir', 'p'}, {'Enviar por wireless', 's'}, {'Excluir...', 'x'}}

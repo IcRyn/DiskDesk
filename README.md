@@ -1,4 +1,4 @@
-# DiskDesk 3 — Explorador de disquetes para CC: Tweaked
+# DiskDesk 3.1.0 — Explorador de disquetes para CC: Tweaked
 
 Interface escura com destaque ciano, barra lateral de unidades, ícones, busca e rodapé simplificado: **D: unidades · A: menu · H: ajuda**. O menu A reúne todas as ações, e o botão direito mostra ações do arquivo. Inclui editor de textos, impressão, backup versionado, restauração e transferência wireless.
 
