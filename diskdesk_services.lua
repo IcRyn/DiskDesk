@@ -292,23 +292,48 @@ function M.sendFile(path, peer, guard, progress)
   if not ok then fail(err) end
   return name
 end
-function M.receiveFile(folder, guard, accept, progress)
+function M.sendFiles(paths,peer,guard,progress)
+  if type(paths)~='table' or #paths<1 or #paths>32 then fail('Escolha de 1 a 32 arquivos.') end
+  if type(peer)~='number' or peer<0 or peer%1~=0 or peer==os.getComputerID() then fail('ID de destino invalido.') end
+  guard=guard or function() end; guard(); M.openWireless()
+  local offered,total={},0
+  for i,path in ipairs(paths) do
+    if fs.isDir(path) then fail('Pastas devem ser compactadas antes do envio.') end
+    local name,size=fs.getName(path),fs.getSize(path)
+    if not M.safeName(name) or size>M.maxFile then fail('Arquivo invalido ou maior que 1 MiB: '..tostring(name)) end
+    offered[i]={name=name,size=size}; total=total+size
+  end
+  if total>8*M.maxFile then fail('Limite wireless do lote: 8 MiB.') end
+  local batch=token()
+  if progress then progress(0,total,'Aguardando aceitacao de '..#paths..' arquivo(s)...') end
+  exchange(peer,{kind='batch_offer',token=batch,files=offered,total=total},'accept',5)
+  local completed=0
+  for i,path in ipairs(paths) do
+    local size=offered[i].size
+    M.sendFile(path,peer,guard,function(done,_,name) if progress then progress(completed+done,total,name) end end)
+    completed=completed+size
+  end
+  return #paths
+end
+function M.receiveFile(folder, guard, accept, progress, firstOffer, firstPeer, batchToken, expected)
   M.assertWritable(folder)
   guard = guard or function() end
   M.openWireless(); guard()
-  local offer, peer
+  local offer, peer=firstOffer,firstPeer
   local deadline = os.clock() + 60
-  repeat
-    offer, peer = waitPacket(nil, nil, math.max(0.01, deadline - os.clock()))
-    if not offer then fail('Nenhum envio em 60 segundos. Abra Receber novamente.') end
-    if offer.kind ~= 'offer' then offer = nil end
-  until offer or os.clock() >= deadline
+  while not offer and os.clock()<deadline do
+    local packet,sender=waitPacket(peer,nil,math.max(0.01,deadline-os.clock()))
+    if not packet then fail('Nenhum envio em 60 segundos. Abra Receber novamente.') end
+    if packet.kind=='offer' then offer,peer=packet,sender
+    elseif batchToken and packet.kind=='batch_offer' and packet.token==batchToken then send(sender,{kind='accept',token=batchToken}) end
+  end
   if not offer then fail('Tempo de espera encerrado.') end
   if not M.safeName(offer.name) or type(offer.token) ~= 'string' or #offer.token > 96 or
     type(offer.size) ~= 'number' or offer.size < 0 or offer.size > M.maxFile or offer.size % 1 ~= 0 or
     type(offer.hash) ~= 'number' or offer.hash < 0 or offer.hash >= 4294967296 or offer.hash % 1 ~= 0 then
     fail('Oferta de arquivo invalida.')
   end
+  if expected and (offer.name~=expected.name or offer.size~=expected.size) then fail('Arquivo nao confere com o lote aceito.') end
   if not accept(peer, offer.name, offer.size) then
     send(peer, {kind = 'reject', token = offer.token, reason = 'usuario cancelou'}); return nil
   end
@@ -361,6 +386,33 @@ function M.receiveFile(folder, guard, accept, progress)
     fail(err)
   end
   return final
+end
+function M.receiveFiles(folder,guard,accept,progress)
+  M.assertWritable(folder); guard=guard or function() end; M.openWireless(); guard()
+  local first,peer,deadline=nil,nil,os.clock()+60
+  repeat
+    first,peer=waitPacket(nil,nil,math.max(0.01,deadline-os.clock()))
+    if not first then fail('Nenhum envio em 60 segundos. Abra Receber novamente.') end
+  until first.kind=='offer' or first.kind=='batch_offer' or os.clock()>=deadline
+  if first.kind=='offer' then
+    local result=M.receiveFile(folder,guard,accept,progress,first,peer)
+    return result and {result} or nil
+  end
+  if type(first.files)~='table' or #first.files<1 or #first.files>32 or type(first.total)~='number' or first.total<0 or first.total>8*M.maxFile then fail('Oferta de lote invalida.') end
+  local total,names=0,{}
+  for i,item in ipairs(first.files) do
+    if type(item)~='table' or not M.safeName(item.name) or type(item.size)~='number' or item.size<0 or item.size>M.maxFile or item.size%1~=0 then fail('Oferta de lote invalida.') end
+    total=total+item.size; names[i]=item.name
+  end
+  if total~=first.total or type(first.token)~='string' or #first.token>96 then fail('Oferta de lote invalida.') end
+  if not accept(peer,names,total) then send(peer,{kind='reject',token=first.token,reason='usuario cancelou'}); return nil end
+  send(peer,{kind='accept',token=first.token})
+  local results,completed={},0
+  for i,item in ipairs(first.files) do
+    local result=M.receiveFile(folder,guard,function() return true end,function(done,_,name) if progress then progress(completed+done,total,name) end end,nil,peer,first.token,item)
+    results[i]=result; completed=completed+item.size
+  end
+  return results
 end
 local raidPath = '.diskdesk-raid.cfg'
 local raid, raidLoaded, raidState = nil, false, 'Desativado'

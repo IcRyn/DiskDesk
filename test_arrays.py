@@ -10,7 +10,7 @@ base = next(ast.literal_eval(node.value) for node in tree.body
 setup = r'''
 A=assert(load(arraySource))()(M)
 volumes={}; allVolumes={}; units={}
-for i=1,9 do
+for i=1,16 do
   local name='drive'..i; local volume={root='member'..i,id=i}
   volumes[name]=volume; allVolumes[name]=volume; files[volume.root]=true
   units[i]=M.capture(name)
@@ -50,6 +50,10 @@ for _,mode in ipairs({'0','1','5','6','10'}) do
   assert(A.status(m).text=='Integro')
 end
 assert(#A.list()==5)
+''')
+test('RAID accepts sixteen members', '''
+local m=create('6',16); assert(m.n==16); checkRestore(m,'sixteen')
+remove(1); remove(16); checkRestore(m,'sixteen-degraded')
 ''')
 test('RAID0 refuses every missing member without output', '''
 local m=create('0',4)

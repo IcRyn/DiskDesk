@@ -26,7 +26,7 @@ local function mul(a,b) if a==0 or b==0 then return 0 end; return exp[(log[a]+lo
 local function div(a,b) if b==0 then fail('Divisor RAID invalido.') end; if a==0 then return 0 end; return exp[(log[a]-log[b])%255] end
 local function integer(n,low,high) return type(n)=='number' and n%1==0 and n>=low and n<=high end
 local function dataCount(mode,n)
-  if not integer(n,2,8) then fail('Escolha de 2 a 8 discos.') end
+  if not integer(n,2,16) then fail('Escolha de 2 a 16 discos.') end
   if mode=='0' then return n end
   if mode=='1' then return 1 end
   if mode=='5' and n>=3 then return n-1 end
@@ -101,7 +101,7 @@ local function room(volume,bytes)
 end
 local function valid(m)
   if type(m)~='table' or m.version~=1 or type(m.id)~='string' or not m.id:match('^[%w%-]+$') or #m.id>80 or
-    not S.safeName(m.name) or not integer(m.n,2,8) or not integer(m.size,1,limit) or
+    not S.safeName(m.name) or not integer(m.n,2,16) or not integer(m.size,1,limit) or
     not integer(m.hash,0,4294967295) or type(m.hashes)~='table' or #m.hashes~=m.n or m.block~=block then fail('Indice RAID invalido.') end
   local expected=A.plan(m.size,m.mode,m.n)
   if m.shardSize~=expected then fail('Tamanho dos blocos RAID invalido.') end

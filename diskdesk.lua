@@ -9,7 +9,7 @@ services.useFilesystem(fs)
 -- Migrate away from the removed automatic RAID 1 feature without deleting its copies.
 pcall(function() if services.raidStatus().enabled then services.raidDisable() end end)
 local sources, source, folder = {}, 1, ''
-local entries, selected, scroll = {}, 1, 0
+local entries, selected, scroll, unitScroll = {}, 1, 0, 0
 local clipboard, job
 local status = 'Selecione um arquivo ou abra uma unidade.'
 local running = true
@@ -173,13 +173,17 @@ local function draw()
     for y=3,H-4 do put(1,y,sidebar,'',theme.panel) end
     put(2,3,sidebar-2,'UNIDADES',theme.panel,theme.muted)
     local capacity = math.max(1,H-10)
-    local first = math.max(1,source-capacity+1)
+    unitScroll=math.max(0,math.min(unitScroll,math.max(0,#sources-capacity)))
+    if source<=unitScroll then unitScroll=source-1 end
+    if source>unitScroll+capacity then unitScroll=source-capacity end
+    local first = unitScroll+1
     for i=first,math.min(#sources,first+capacity-1) do
       local item,y=sources[i],4+i-first
       put(2,y,sidebar-2,(item.virtual and '= ' or (item.drive and 'o ' or '# '))..item.name,
         i==source and theme.select or theme.panel)
       buttons[#buttons+1]={x=1,last=sidebar,y=y,action='source:'..i}
     end
+    if #sources>capacity then put(2,H-5,sidebar-2,'rolar '..first..'-'..math.min(#sources,first+capacity-1)..'/'..#sources,theme.panel,theme.muted) end
     if H>=13 then put(2,H-4,sidebar-2,muted and 'SOM: mudo' or (deviceCount.speaker>0 and 'SOM: ligado' or 'Sem Speaker'),theme.panel,theme.muted) end
   end
   put(listX,3,listWidth,filter~='' and ('Busca: '..filter) or ('ARQUIVOS / '..#entries..' itens'),theme.bg,theme.accent)
@@ -509,23 +513,43 @@ pathGuard=function(target)
   return function() end
 end
 local function sendWireless()
-  local item = requireItem()
-  if item.dir then error('Selecione um arquivo para enviar.', 0) end
-  services.openWireless()
-  local peer = tonumber(prompt('ID do computador de destino (abra Receber nele):'))
-  if not peer then return end
-  services.sendFile(item.path, peer, pathGuard(item.path), progress('Enviar'))
-  status = 'Arquivo entregue e verificado no ID ' .. peer .. '.'
+  local files,checked={},{}
+  for _,item in ipairs(entries) do if not item.dir then files[#files+1]=item end end
+  if #files==0 then error('Esta pasta nao possui arquivos para enviar.',0) end
+  local currentItem=entries[selected]
+  for i,item in ipairs(files) do if item==currentItem then checked[i]=true end end
+  local cursor=1
+  while true do
+    local chosen,labels={},{}
+    for i,item in ipairs(files) do if checked[i] then chosen[#chosen+1]=item end end
+    labels[1]='Enviar '..#chosen..' arquivo(s)'
+    for i,item in ipairs(files) do labels[i+1]=(checked[i] and '[x] ' or '[ ] ')..item.name..'  '..sizeLabel(fs.getSize(item.path)) end
+    local option=choose('Escolha os arquivos',labels,cursor)
+    if not option then return end
+    cursor=option
+    if option==1 then
+      if #chosen==0 then show({'Marque ao menos um arquivo.'},' Wireless')
+      else
+        services.openWireless()
+        local peer=tonumber(prompt('ID do computador de destino (abra Receber nele):'))
+        if not peer then return end
+        local paths={}; for _,item in ipairs(chosen) do paths[#paths+1]=item.path end
+        services.sendFiles(paths,peer,function() for _,item in ipairs(chosen) do pathGuard(item.path)() end end,progress('Enviar'))
+        status=#paths..' arquivo(s) entregues e verificados no ID '..peer..'.'; return
+      end
+    else checked[option-1]=not checked[option-1] end
+  end
 end
 local function receiveWireless()
   services.openWireless()
   local destination = path()
   local update = progress('Receber')
   update(0, 1, 'Seu ID: ' .. os.getComputerID() .. '. Aguardando envio por 60 segundos. Pasta: /' .. destination)
-  local result = services.receiveFile(destination, pathGuard(destination), function(peer, name, size)
-    return confirm('ID ' .. peer .. ' quer enviar ' .. name .. ' (' .. sizeLabel(size) .. '). Aceitar nesta pasta?')
+  local results = services.receiveFiles(destination, pathGuard(destination), function(peer, offered, size)
+    local label=type(offered)=='table' and (#offered..' arquivos') or offered
+    return confirm('ID '..peer..' quer enviar '..label..' ('..sizeLabel(size)..'). Aceitar nesta pasta?')
   end, update)
-  status = result and ('Recebido: ' .. fs.getName(result)) or 'Recebimento recusado.'
+  status = results and (#results..' arquivo(s) recebidos e verificados.') or 'Recebimento recusado.'
 end
 selectDisks=function(title,minimum,maximum,excluded,even)
   scan()
@@ -568,7 +592,7 @@ local function virtualMenu()
     local mode=({'0','1','5','6','10'})[modeIndex]
     local excluded={}
     for _,volume in ipairs(virtual.list()) do for _,id in ipairs(volume.members) do excluded[id]=true end end
-    local units=selectDisks('Marque os membros da unidade',({2,2,3,4,4})[modeIndex],8,excluded,mode=='10')
+    local units=selectDisks('Marque os membros da unidade',({2,2,3,4,4})[modeIndex],16,excluded,mode=='10')
     if not units then return end
     local name=prompt('Nome da unidade RAID:'); if name=='' then return end
     local ids={}; for _,unit in ipairs(units) do ids[#ids+1]='#'..unit.id end
@@ -650,6 +674,7 @@ local function archiveAction(extract)
 end
 local helpTopics={
   {title='Unidades RAID em tempo real',text={'A > RAID e backup > Unidades RAID em tempo real. Crie uma unidade e selecione seus discos.',
+    'Cada unidade aceita de 2 a 16 membros; RAID 1+0 exige quantidade par.',
     'Abra a nova unidade em D. C/M + V copia ou move para ela; os dados sao divididos ou espelhados automaticamente.',
     'RAID 0 soma a capacidade util dos discos iguais. RAID 1 espelha. RAID 5/6 reservam 1/2 membros para paridade; 1+0 usa metade para espelhos.',
     'Os percentuais e o espaco livre atualizam apos cada operacao. A capacidade e limitada pelo menor membro e reserva espaco para indices.',
@@ -861,7 +886,9 @@ local function main()
       elseif a == keys.backspace then command = 'back'
       elseif a == keys.escape or a == keys.f1 then command = 'clear'
       elseif a == keys.delete then command = 'x' end
-    elseif event == 'mouse_scroll' then selected = math.max(1, math.min(#entries, selected + a))
+    elseif event == 'mouse_scroll' then
+      if b and b<=14 and W>=45 then unitScroll=math.max(0,math.min(math.max(0,#sources-math.max(1,H-10)),unitScroll+a))
+      else selected = math.max(1, math.min(#entries, selected + a)) end
     elseif event == 'mouse_click' and (a == 1 or a == 2) then
       if a == 1 then
         for _, button in ipairs(buttons) do

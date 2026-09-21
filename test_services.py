@@ -347,6 +347,7 @@ NETWORK = r'''
 -- Real sender and receiver service functions, scheduled like two CC computers.
 files['sender']=true; files['receiver']=true
 files['sender/file.bin']=emptyFile and '' or string.rep('abcdef\0\255',3000)
+if batch then files['sender/second.txt']='segundo arquivo' end
 local queue,timers,workers,modules,results,errors={},{},{},{},{},{}
 local timerID,steps=0,0
 local drops,duplicates=0,0
@@ -372,13 +373,16 @@ end
 modules[1],modules[2]=endpoint(1),endpoint(2)
 local receiverGuard=function() if ejectOnReceive then error('disk removed') end end
 workers[2]=coroutine.create(function()
-  local ok,result=pcall(modules[2].receiveFile,'receiver',receiverGuard,function()
+  local receiver=batch and modules[2].receiveFiles or modules[2].receiveFile
+  local ok,result=pcall(receiver,'receiver',receiverGuard,function()
     return not refuse
   end)
   if ok then results[2]=result else errors[2]=result end
 end)
 workers[1]=coroutine.create(function()
-  local ok,result=pcall(modules[1].sendFile,'sender/file.bin',2)
+  local sender=batch and modules[1].sendFiles or modules[1].sendFile
+  local value=batch and {'sender/file.bin','sender/second.txt'} or 'sender/file.bin'
+  local ok,result=pcall(sender,value,2)
   if ok then results[1]=result else errors[1]=result end
 end)
 local function resume(id,event)
@@ -409,7 +413,10 @@ if expectError then
 else
   assert(not errors[1] and not errors[2],tostring(errors[1])..' | '..tostring(errors[2]))
   assert(results[1] and results[2])
-  assert(files[results[2]]==files['sender/file.bin'])
+  if batch then
+    assert(#results[2]==2 and files[results[2][1]]==files['sender/file.bin'])
+    assert(files[results[2][2]]==files['sender/second.txt'])
+  else assert(files[results[2]]==files['sender/file.bin']) end
 end
 '''
 
@@ -425,6 +432,7 @@ for name, setup in [
     ('corrupt wireless data', 'badData=true; expectError=true'),
     ('all acknowledgements lost', "dropKind='ack'; dropAll=true; expectError=true"),
     ('destination name collision', "files['receiver/file.bin']='keep'"),
+    ('wireless batch with multiple files', 'batch=true'),
 ]:
     test(name, setup + '\n' + NETWORK + ("\nassert(files['receiver/file.bin']=='keep')" if 'collision' in name else ''))
 

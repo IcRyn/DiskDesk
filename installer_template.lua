@@ -2,6 +2,32 @@
 local payload = {
 -- DISKDESK_PAYLOAD
 }
+local function unpackItem(item)
+  local alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+  local map={}; for i=1,#alphabet do map[alphabet:sub(i,i)]=i-1 end
+  local bytes,acc,bits={},0,0
+  for char in item.contents:gmatch('.') do
+    if char~='=' then
+      acc=acc*64+assert(map[char],'Base64 invalido'); bits=bits+6
+      if bits>=8 then bits=bits-8; bytes[#bytes+1]=string.char(math.floor(acc/2^bits)%256); acc=acc%2^bits end
+    end
+  end
+  local data=table.concat(bytes); if #data%2~=0 then error('Pacote incompleto.',0) end
+  local dict={}; for i=0,255 do dict[i]=string.char(i) end
+  local nextCode,previous,out,size=256,nil,{},0
+  for i=1,#data,2 do
+    local code=data:byte(i)*256+data:byte(i+1); local entry=dict[code]
+    if not entry and code==nextCode and previous then entry=previous..previous:sub(1,1) end
+    if not entry then error('Pacote compactado invalido.',0) end
+    size=size+#entry; if size>item.size then error('Pacote excede tamanho.',0) end
+    out[#out+1]=entry
+    if previous and nextCode<4096 then dict[nextCode]=previous..entry:sub(1,1); nextCode=nextCode+1 end
+    previous=entry
+  end
+  item.contents=table.concat(out)
+  if #item.contents~=item.size then error('Tamanho do pacote invalido.',0) end
+  return item.contents
+end
 local app, launcher = 'diskdesk-app', 'diskdesk.lua'
 local function header(title)
   term.setBackgroundColor(colors.black); term.setTextColor(colors.white)
@@ -48,8 +74,8 @@ local function install()
   end
   local bytes = 8192
   for _, item in ipairs(payload) do
-    bytes = bytes + #item.contents
-    local compiled, err = load(item.contents, '@' .. item.name, 't', {})
+    local contents=unpackItem(item); bytes = bytes + #contents
+    local compiled, err = load(contents, '@' .. item.name, 't', {})
     if not compiled then error('Instalador danificado: ' .. tostring(err), 0) end
   end
   local free = fs.getFreeSpace('')

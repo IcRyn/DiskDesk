@@ -254,19 +254,19 @@ test('click confirm no', "selectText(); char('x'); events[#events+1]={'mouse_cli
 test('wireless send dialog and progress', '''
 serviceOverride=function(m)
   m.openWireless=function() end
-  m.sendFile=function(path,peer,guard,update)
-    assert(path=='note.txt' and peer==12); guard(); update(5,5,'note.txt'); sent=true
+  m.sendFiles=function(paths,peer,guard,update)
+    assert(#paths==1 and paths[1]=='note.txt' and peer==12); guard(); update(5,5,'note.txt'); sent=true
   end
 end
-selectText(); char('s'); answer('12'); char('q')
+selectText(); char('s'); key('enter'); answer('12'); char('q')
 ''', "assert(sent)")
 test('wireless receive confirmation and progress', '''
 fs.getName=function(p) return p:match('[^/]+$') or '' end
 serviceOverride=function(m)
   m.openWireless=function() end
-  m.receiveFile=function(folder,guard,accept,update)
-    assert(folder==''); guard(); assert(accept(12,'test.txt',5)); update(5,5,'test.txt')
-    received=true; return 'test.txt'
+  m.receiveFiles=function(folder,guard,accept,update)
+    assert(folder==''); guard(); assert(accept(12,{'test.txt','foto.bin'},10)); update(10,10,'foto.bin')
+    received=true; return {'test.txt','foto.bin'}
   end
 end
 char('g'); char('s'); char('q')

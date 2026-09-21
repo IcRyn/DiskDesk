@@ -1,6 +1,7 @@
 """Build one offline Lua installer and refresh the distribution zip."""
 from pathlib import Path
 from zipfile import ZipFile, ZIP_DEFLATED
+from base64 import b64encode
 
 root = Path(__file__).parent
 
@@ -11,10 +12,30 @@ def lua_string(value):
     # Lua discards the first newline following a long-bracket opener.
     return '[' + delimiter + '[\n' + value + ']' + delimiter + ']'
 
+def lzw(value):
+    data = value.encode('utf-8')
+    if not data:
+        return b''
+    dictionary = {bytes([i]): i for i in range(256)}
+    next_code, word, output = 256, b'', bytearray()
+    for byte in data:
+        char = bytes([byte]); both = word + char
+        if both in dictionary:
+            word = both
+        else:
+            code = dictionary[word]; output.extend((code // 256, code % 256))
+            if next_code < 4096:
+                dictionary[both] = next_code; next_code += 1
+            word = char
+    if word:
+        code = dictionary[word]; output.extend((code // 256, code % 256))
+    return bytes(output)
+
 items = [(name, (root / name).read_text(encoding='utf-8')) for name in
          ('diskdesk.lua', 'diskdesk_services.lua', 'diskdesk_arrays.lua', 'diskdesk_volumes.lua')]
 items.append(('launcher', '-- DiskDesk launcher\nshell.run("/diskdesk-app/diskdesk.lua", ...)\n'))
-payload = '\n'.join('  {name=' + lua_string(name) + ', contents=' + lua_string(contents) + '},'
+payload = '\n'.join('  {name=' + lua_string(name) + ', size=' + str(len(contents.encode('utf-8'))) +
+                    ', contents=' + lua_string(b64encode(lzw(contents)).decode('ascii')) + '},'
                     for name, contents in items)
 template = (root / 'installer_template.lua').read_text(encoding='utf-8')
 assert template.count('-- DISKDESK_PAYLOAD') == 1

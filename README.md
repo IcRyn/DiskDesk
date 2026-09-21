@@ -24,7 +24,7 @@ Depois, execute **`/diskdesk`** de qualquer pasta (ou `diskdesk` na raiz).
 
 Ao atualizar, a pasta antiga `/diskdesk-app` e o atalho anterior são guardados em `/diskdesk-backup-<identificador>/previous/`. Os arquivos novos são preparados antes de substituir a instalação; se a publicação falhar, tenta restaurar a versão anterior e informa a pasta de recuperação. O instalador não modifica `startup` nem arquivos dos disquetes. Se a energia acabar durante a instalação, consulte essa pasta para recuperação manual.
 
-O instalador ainda precisa ser transferido para o jogo uma vez. Ele ocupa cerca de 127 KiB e cabe por pouco em um floppy vazio de 128 KiB. O download direto é mais simples. Depois de transferido, ele funciona sem HTTP.
+O instalador ainda precisa ser transferido para o jogo uma vez. O conteúdo interno agora é compactado e o arquivo ocupa cerca de 118 KiB, cabendo em um floppy vazio de 128 KiB. O download direto é mais simples. Depois de transferido, ele funciona sem HTTP.
 
 ### Instalação manual
 
@@ -88,7 +88,7 @@ Se faltar espaço ou houver falha, a origem fica preservada enquanto a cópia n�
 
 ## Unidade RAID com capacidade conjunta e atualização durante o uso
 
-Use **A → RAID e backup → Unidades RAID em tempo real → Criar unidade RAID**. Escolha RAID 0, 1, 5, 6 ou 1+0, marque os disquetes e dê um nome. A unidade aparece em **D: unidades**, por exemplo **RAID 0 - Trabalho**.
+Use **A → RAID e backup → Unidades RAID em tempo real → Criar unidade RAID**. Escolha RAID 0, 1, 5, 6 ou 1+0, marque os disquetes e dê um nome. A unidade aparece em **D: unidades**, por exemplo **RAID 0 - Trabalho**. As listas aceitam roda do mouse e setas quando há mais unidades do que cabe na tela.
 
 Copie com **C**, ou marque para mover com **M**, abra essa nova unidade e pressione **V**. Os dados são distribuídos automaticamente durante a gravação, sem compactação. O espaço livre e a porcentagem atualizam quando a operação termina. **N/T** cria pastas/textos, **R** renomeia e **Delete** exclui. O original de um movimento só é removido após a cópia verificada.
 
@@ -100,7 +100,7 @@ Copie com **C**, ou marque para mover com **M**, abra essa nova unidade e pressi
 | RAID 6 | 4 | (N−2) × tamanho do menor disco | Dois membros ausentes |
 | RAID 1+0 | 4, quantidade par | (N÷2) × tamanho do menor disco | Um ausente por par |
 
-Até oito membros por unidade. Há uma reserva de 8 KiB por membro para índices; os diretórios e índices adicionais também consomem espaço. Arquivos que já estavam na raiz física dos disquetes reduzem o espaço livre, mas **não entram na unidade automaticamente**. Discos de tamanhos diferentes são limitados pelo menor. Os membros não podem pertencer a duas unidades virtuais locais.
+Até dezesseis membros por unidade. Há uma reserva de 8 KiB por membro para índices; os diretórios e índices adicionais também consomem espaço. Arquivos que já estavam na raiz física dos disquetes reduzem o espaço livre, mas **não entram na unidade automaticamente**. Discos de tamanhos diferentes são limitados pelo menor. Os membros não podem pertencer a duas unidades virtuais locais.
 
 Ao editar, o DiskDesk abre um rascunho no computador. **Salvar e sair do editor** publica a alteração nos discos. Se a publicação falhar, informa onde o rascunho foi preservado. A versão nova de um arquivo é preparada antes de substituir a anterior, então alterar um arquivo exige espaço temporário para as duas versões. Se a origem de um movimento estiver num membro quase cheio, passe o arquivo pelo computador antes de colocá-lo na unidade, pois a origem só será removida após a cópia verificada. O limite é de 8 MiB menos um byte por arquivo e 1024 entradas de catálogo, incluindo a raiz; a capacidade física geralmente será menor. Pastas com vários arquivos são processadas arquivo por arquivo.
 
@@ -155,11 +155,11 @@ Abra o disquete que contém os backups, use **A → RAID e backup → Restaurar 
 Instale o DiskDesk 3 nos dois computadores e conecte um **Wireless Modem** ou **Ender Modem** em cada. Precisam estar ligados e dentro do alcance da conexão; o DiskDesk não instala repetidores.
 
 1. **Destino:** abra a pasta onde quer salvar e use **A → Rede wireless → Receber**. A tela mostra o ID; também está no cabeçalho. Aguarda uma oferta por até 60 segundos, com F1 para cancelar.
-2. **Origem:** selecione um arquivo e use **A → Rede wireless → Enviar**. Digite o ID do destino.
-3. **Destino:** confira ID do remetente, nome e tamanho e aceite.
-4. Aguarde a confirmação. O arquivo aparece na pasta escolhida após ser verificado.
+2. **Origem:** use **A → Rede wireless → Enviar**, marque até 32 arquivos da pasta atual e digite o ID do destino.
+3. **Destino:** confira ID do remetente, quantidade e tamanho total e aceite o lote.
+4. Aguarde a confirmação. Cada arquivo aparece na pasta escolhida após ser verificado.
 
-Envia um arquivo por vez, inclusive binários, de até **1 MiB**, em blocos de 8 KiB. Pastas não são enviadas diretamente. Há confirmação dos blocos, tentativas de reenvio e checksum. A aceitação pode levar até cerca de 90 segundos; após iniciada, uma transferência sem progresso por 15 segundos é interrompida.
+Envia até **32 arquivos por lote**, inclusive binários, com limite de **1 MiB por arquivo** e **8 MiB no total**, em blocos de 8 KiB. Pastas não são enviadas diretamente; compacte-as em DDZ primeiro. O destino confirma o lote uma vez, e cada arquivo mantém confirmação dos blocos, tentativas de reenvio e checksum. A aceitação pode levar até cerca de 90 segundos; após iniciada, uma transferência sem progresso por 15 segundos é interrompida.
 
 Se o nome existir, a cópia recebe um sufixo (`arquivo.txt-2`, por exemplo). O arquivo só sai do nome temporário `.partial` após a verificação. Não executa arquivos recebidos. Se faltar a confirmação final, confira o destino antes de reenviar: o arquivo pode já estar salvo.
 
