@@ -11,7 +11,7 @@ services.useFilesystem(fs)
 pcall(function() if services.raidStatus().enabled then services.raidDisable() end end)
 local sources, source, folder = {}, 1, ''
 local entries, selected, scroll, unitScroll = {}, 1, 0, 0
-local clipboard, job
+local clipboard, job, tempSerial
 local status = 'Selecione um arquivo ou abra uma unidade.'
 local running = true
 local W, H = term.getSize()
@@ -538,7 +538,8 @@ local function sendWireless()
   local chosen=selectItems('Escolha os arquivos',true,32); if not chosen then return end
   services.openWireless()
   local peer=tonumber(prompt('ID do computador de destino (abra Receber nele):')); if not peer then return end
-  local paths={}; for _,item in ipairs(chosen) do paths[#paths+1]=item.path end
+  local paths,total={ },0; for _,item in ipairs(chosen) do paths[#paths+1]=item.path; total=total+fs.getSize(item.path) end
+  if not confirm('Enviar '..#paths..' arquivo(s), total '..sizeLabel(total)..', para o computador ID '..peer..'?') then return end
   services.sendFiles(paths,peer,function() for _,item in ipairs(chosen) do pathGuard(item.path)() end end,progress('Enviar'))
   status=#paths..' arquivo(s) entregues e verificados no ID '..peer..'.'
 end
@@ -549,7 +550,7 @@ local function receiveWireless()
   update(0, 1, 'Seu ID: ' .. os.getComputerID() .. '. Aguardando envio por 60 segundos. Pasta: /' .. destination)
   local results = services.receiveFiles(destination, pathGuard(destination), function(peer, offered, size)
     local label=type(offered)=='table' and (#offered..' arquivos') or offered
-    return confirm('ID '..peer..' quer enviar '..label..' ('..sizeLabel(size)..'). Aceitar nesta pasta?')
+    return confirm('ID '..peer..' quer enviar '..label..' ('..sizeLabel(size)..'). Destino: /'..destination..'. Aceitar?')
   end, update)
   status = results and (#results..' arquivo(s) recebidos e verificados.') or 'Recebimento recusado.'
 end
@@ -665,6 +666,7 @@ local function archiveAction(extract)
   local target=newName(extract and 'Nome da NOVA pasta para extrair:' or 'Nome do pacote (ex: documentos.ddz):')
   if not target then return end
   if not extract and target:sub(-4):lower()~='.ddz' then target=target..'.ddz' end
+  if not extract and not confirm('Criar pacote com '..#chosen..' item(ns) em /'..target..'?') then return end
   local targetGuard=pathGuard(target)
   local function guard()
     targetGuard()
@@ -675,8 +677,25 @@ local function archiveAction(extract)
     services.extract(item.path,target,guard); status='Extraido em: '..fs.getName(target)
   else
     local paths={}; for _,selectedItem in ipairs(chosen) do paths[#paths+1]=selectedItem.path end
-    local original,packed=services.compressMany(paths,target,guard)
-    status=#paths..' item(ns): '..sizeLabel(original)..' -> '..sizeLabel(packed)..(packed>=original and ' (inclui nomes/indice)' or (' (-'..math.floor((1-packed/original)*100)..'%)'))
+    local update=progress('Compactar'); update(0,2,'Destino: /'..target)
+    local staging=target
+    if current().drive or current().virtual then
+      tempSerial=(tempSerial or 0)+1; physicalFs.makeDir('.diskdesk-temp')
+      staging='.diskdesk-temp/pacote-'..os.epoch('utc')..'-'..tempSerial..'.ddz'
+    end
+    local original,packed=services.compressMany(paths,staging,guard); update(1,2,'Pacote temporario verificado')
+    if staging~=target then
+      local free=fs.getFreeSpace(fs.getDir(target))
+      if type(free)=='number' and free<packed+1024 then
+        physicalFs.delete(staging)
+        show({'O pacote ficou com '..sizeLabel(packed)..'.','Destino: /'..target,'Livre no destino: '..sizeLabel(free),'O temporario do computador foi removido.'},' Sem espaco para o pacote')
+        return
+      end
+      local fromGuard,toGuard=pathGuard(staging),pathGuard(target)
+      services.moveItem(staging,target,function() fromGuard(); toGuard() end)
+    end
+    update(2,2,'Salvo em /'..target)
+    status='Salvo em /'..target..' | '..#paths..' item(ns): '..sizeLabel(original)..' -> '..sizeLabel(packed)..(packed>=original and ' (inclui nomes/indice)' or (' (-'..math.floor((1-packed/original)*100)..'%)'))
   end
   filter=''
 end
@@ -866,24 +885,31 @@ local function action(command)
       if fs.exists(dest) then conflicts[#conflicts+1]=item.name end
       if dest==item.path or dest:sub(1,#item.path+1)==item.path..'/' then error('Nao copie uma pasta para dentro dela mesma: '..item.name,0) end
       targets[i]=dest
-      local bytes,count=treeSize(item.path); totalBytes,totalEntries=totalBytes+bytes,totalEntries+count
+      local bytes,count=treeSize(item.path); item.required=bytes+count*1024; item.target=dest
+      totalBytes,totalEntries=totalBytes+bytes,totalEntries+count
     end
     if #conflicts>0 then
       if #clipboard.items==1 then targets[1]=newName('Ja existe. Novo nome para a copia:'); if not targets[1] then return end
       else error('Ja existem no destino: '..table.concat(conflicts,', ')..'. Renomeie ou remova antes.',0) end
     end
-    for _,dest in ipairs(targets) do services.assertWritable(dest) end
+    for i,dest in ipairs(targets) do clipboard.items[i].target=dest; services.assertWritable(dest) end
     local free,capacity=fs.getFreeSpace(path()),fs.getCapacity(path())
     local required=totalBytes+totalEntries*1024
+    local partial=false
     if type(free)=='number' and required>free then
       local used=type(capacity)=='number' and capacity>0 and math.floor((capacity-free)/capacity*100+0.5) or nil
-      show({'A operacao nao foi iniciada.','',
-        'Dados selecionados: '..sizeLabel(totalBytes),'Reserva estimada: '..sizeLabel(required),
-        'Espaco livre: '..sizeLabel(free),used and ('Unidade em '..used..'% de uso.') or '', '',
-        current().virtual and 'RAID precisa de espaco para blocos, paridade e publicacao segura.' or 'Libere espaco ou escolha outra unidade.'},' Espaco insuficiente')
-      return
+      if clipboard.move and #clipboard.items>1 then
+        partial=confirm('O lote inteiro nao cabe. Dados: '..sizeLabel(totalBytes)..', reserva estimada: '..sizeLabel(required)..', livre: '..sizeLabel(free)..(used and (', uso: '..used..'%') or '')..'. Mover agora somente os itens que couberem? Os demais continuarao selecionados.')
+        if not partial then return end
+      else
+        show({'A operacao nao foi iniciada.','',
+          'Dados selecionados: '..sizeLabel(totalBytes),'Reserva estimada: '..sizeLabel(required),
+          'Espaco livre: '..sizeLabel(free),used and ('Unidade em '..used..'% de uso.') or '', '',
+          current().virtual and 'RAID precisa de espaco para blocos, paridade e publicacao segura.' or 'Libere espaco ou escolha outra unidade.'},' Espaco insuficiente')
+        return
+      end
     end
-    if current().virtual and type(free)=='number' and type(capacity)=='number' and capacity>0 then
+    if not partial and current().virtual and type(free)=='number' and type(capacity)=='number' and capacity>0 then
       local projected=math.floor((capacity-free+required)/capacity*100+0.5)
       if projected>=90 and not confirm('Aviso: esta unidade RAID pode chegar a aproximadamente '..projected..'% de uso. Continuar?') then return end
     end
@@ -891,14 +917,19 @@ local function action(command)
     local update=progress(clipboard.move and 'Mover' or 'Copiar')
     update(0,count,'Preparando '..count..' item(ns)...')
     if clipboard.move then
-      while #clipboard.items>0 do
-        local item=clipboard.items[1]; local dest=targets[count-#clipboard.items+1]
-        local fromGuard,toGuard=pathGuard(item.path),pathGuard(dest)
-        services.moveItem(item.path,dest,function() fromGuard(); toGuard() end)
-        table.remove(clipboard.items,1)
-        update(count-#clipboard.items,count,item.name)
+      local index,done=1,0
+      while index<=#clipboard.items do
+        local item=clipboard.items[index]
+        local available=fs.getFreeSpace(path())
+        if type(available)=='number' and item.required>available then index=index+1
+        else
+          local fromGuard,toGuard=pathGuard(item.path),pathGuard(item.target)
+          services.moveItem(item.path,item.target,function() fromGuard(); toGuard() end)
+          table.remove(clipboard.items,index); done=done+1; update(done,count,item.name)
+        end
       end
-      clipboard=nil; status=count..' item(ns) movidos e verificados.'
+      if #clipboard.items==0 then clipboard=nil; status=count..' item(ns) movidos e verificados.'
+      else status=done..' movido(s); '..#clipboard.items..' ainda selecionado(s). Libere espaco e pressione V novamente.' end
     else
       for i,item in ipairs(clipboard.items) do fs.copy(item.path,targets[i]); update(i,count,item.name) end
       status=#clipboard.items..' item(ns) copiados.'

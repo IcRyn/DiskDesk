@@ -90,7 +90,7 @@ Se faltar espaço ou houver falha, a origem fica preservada enquanto a cópia n�
 
 Use **A → RAID e backup → Unidades RAID em tempo real → Criar unidade RAID**. Escolha RAID 0, 1, 5, 6 ou 1+0, marque os disquetes e dê um nome. A unidade aparece em **D: unidades**, por exemplo **RAID 0 - Trabalho**. As listas aceitam roda do mouse e setas quando há mais unidades do que cabe na tela.
 
-Use **C** para copiar ou **M** para mover, marque até 64 arquivos e pastas da tela atual, escolha o botão ciano **CONFIRMAR**, abra o destino e pressione **V**. Isso também funciona entre o computador, disquetes e unidades RAID. Uma barra mostra o avanço por item. Antes de começar, o DiskDesk compara o tamanho estimado com o espaço livre; em RAID quase cheio, avisa quando a operação não cabe ou quando a ocupação projetada chega a 90%. Os dados são distribuídos automaticamente durante a gravação, sem compactação. **N/T** cria pastas/textos, **R** renomeia e **Delete** exclui. O original de cada movimento só é removido após sua cópia ser verificada.
+Use **C** para copiar ou **M** para mover, marque até 64 arquivos e pastas da tela atual, escolha o botão ciano **CONFIRMAR**, abra o destino e pressione **V**. Isso também funciona entre o computador, disquetes e unidades RAID. Uma barra mostra o avanço por item. Antes de começar, o DiskDesk compara o tamanho estimado com o espaço livre; em RAID quase cheio, avisa quando a operação não cabe ou quando a ocupação projetada chega a 90%. Se um lote de movimentação não couber inteiro, você pode mover somente os itens que couberem; os restantes continuam selecionados para outra tentativa com **V**. Os dados são distribuídos automaticamente durante a gravação, sem compactação. **N/T** cria pastas/textos, **R** renomeia e **Delete** exclui. O original de cada movimento só é removido após sua cópia ser verificada.
 
 | Modo | Mínimo | Capacidade útil antes dos índices | Redundância |
 |---|---|---|---|
@@ -114,7 +114,7 @@ Uma falha pode deixar blocos temporários ou antigos ocupando espaço. O program
 
 ## Compactar e extrair
 
-Use **A → Compactar e extrair**, ou pressione **Z**, marque até 64 arquivos e pastas da tela atual e escolha o botão ciano **CONFIRMAR**. O DiskDesk cria um único pacote com todos os itens selecionados. **Y** extrai o pacote. O formato próprio **`.ddz`** preserva nomes, estrutura, pastas vazias e dados binários. Você também pode enviar o pacote por wireless.
+Use **A → Compactar e extrair**, ou pressione **Z**, marque até 64 arquivos e pastas da tela atual e escolha o botão ciano **CONFIRMAR**. Antes de iniciar, o DiskDesk mostra o caminho completo do destino. Ao salvar em disquete ou RAID, monta e verifica primeiro o pacote numa pasta temporária do computador e depois o transfere ao destino; se o pacote não couber, o temporário é removido e o tamanho necessário é mostrado. **Y** extrai o pacote. O formato próprio **`.ddz`** preserva nomes, estrutura, pastas vazias e dados binários. Você também pode enviar o pacote por wireless.
 
 Agora escreve **DDZ2**, com índice binário, números de tamanho variável e referências às pastas pai, evitando repetir os caminhos completos. Comprime índice e conteúdo juntos com LZW quando isso reduz o tamanho; caso contrário guarda essa estrutura binária sem LZW. Continua extraindo os pacotes DDZ1 antigos; versões antigas do DiskDesk não leem DDZ2.
 
@@ -156,8 +156,9 @@ Instale o DiskDesk 3 nos dois computadores e conecte um **Wireless Modem** ou **
 
 1. **Destino:** abra a pasta onde quer salvar e use **A → Rede wireless → Receber**. A tela mostra o ID; também está no cabeçalho. Aguarda uma oferta por até 60 segundos, com F1 para cancelar.
 2. **Origem:** use **A → Rede wireless → Enviar**, marque até 32 arquivos da pasta atual e digite o ID do destino.
-3. **Destino:** confira ID do remetente, quantidade e tamanho total e aceite o lote.
-4. Aguarde a confirmação. Cada arquivo aparece na pasta escolhida após ser verificado.
+3. **Origem:** confira a quantidade, o tamanho total e o ID antes de confirmar o envio.
+4. **Destino:** confira ID do remetente, quantidade, tamanho total e a pasta de destino antes de aceitar o lote.
+5. Aguarde a confirmação. Cada arquivo aparece na pasta escolhida após ser verificado.
 
 Envia até **32 arquivos por lote**, inclusive binários, com limite de **1 MiB por arquivo** e **8 MiB no total**, em blocos de 8 KiB. Pastas não são enviadas diretamente; compacte-as em DDZ primeiro. O destino confirma o lote uma vez, e cada arquivo mantém confirmação dos blocos, tentativas de reenvio e checksum. A aceitação pode levar até cerca de 90 segundos; após iniciada, uma transferência sem progresso por 15 segundos é interrompida.
 
