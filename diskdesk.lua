@@ -45,7 +45,7 @@ local function line(y, text, bg, fg)
   term.setCursorPos(1, y)
   term.write((text .. string.rep(' ', W)):sub(1, W))
 end
-local function choose(title, items, initial, bottom)
+local function choose(title, items, initial, bottom, highlightFirst)
   local selectedOption, offset = initial or 1, 0
   while true do
     W, H = term.getSize()
@@ -58,8 +58,9 @@ local function choose(title, items, initial, bottom)
     put(x-1,y,width+2,'+'..fit(' '..title..' ',width):gsub(' +$',function(s) return string.rep('-',#s) end)..'+',theme.bg,theme.accent)
     for row = 1, rows do
       local i = offset + row
+      local special=highlightFirst and i==1
       put(x, y + row, width, (i == selectedOption and ' > ' or '   ') .. items[i],
-        i == selectedOption and theme.select or theme.panel, theme.text)
+        special and theme.accent or (i == selectedOption and theme.select or theme.panel),special and colors.black or theme.text)
       put(x-1,y+row,1,'|',theme.bg,theme.accent)
       put(x+width,y+row,1,'|',theme.bg,theme.accent)
     end
@@ -522,9 +523,9 @@ local function selectItems(title,filesOnly,maximum)
   while true do
     local chosen,labels={},{}
     for i,item in ipairs(candidates) do if checked[i] then chosen[#chosen+1]=item end end
-    labels[1]='Confirmar '..#chosen..' item(ns)'
+    labels[1]='>> CONFIRMAR '..#chosen..' ITEM(NS) <<'
     for i,item in ipairs(candidates) do labels[i+1]=(checked[i] and '[x] ' or '[ ] ')..(item.dir and '[+] ' or '')..item.name end
-    local option=choose(title,labels,cursor); if not option then return end; cursor=option
+    local option=choose(title,labels,cursor,nil,true); if not option then return end; cursor=option
     if option==1 then
       if #chosen==0 then show({'Marque ao menos um item.'},' Selecao')
       else return chosen end
@@ -657,18 +658,24 @@ local function virtualMenu()
   end
 end
 local function archiveAction(extract)
-  local item=requireItem()
-  if extract and item.dir then error('Selecione um pacote .ddz.',0) end
+  local item,chosen
+  if extract then item=requireItem(); if item.dir then error('Selecione um pacote .ddz.',0) end
+  else chosen=selectItems('Itens para compactar',false,64); if not chosen then return end end
   local target=newName(extract and 'Nome da NOVA pasta para extrair:' or 'Nome do pacote (ex: documentos.ddz):')
   if not target then return end
   if not extract and target:sub(-4):lower()~='.ddz' then target=target..'.ddz' end
-  local sourceGuard,targetGuard=pathGuard(item.path),pathGuard(target)
-  local function guard() sourceGuard(); targetGuard() end
+  local targetGuard=pathGuard(target)
+  local function guard()
+    targetGuard()
+    if extract then pathGuard(item.path)()
+    else for _,selectedItem in ipairs(chosen) do pathGuard(selectedItem.path)() end end
+  end
   if extract then
     services.extract(item.path,target,guard); status='Extraido em: '..fs.getName(target)
   else
-    local original,packed=services.compress(item.path,target,guard)
-    status='Pacote: '..sizeLabel(original)..' -> '..sizeLabel(packed)..(packed>=original and ' (inclui nomes/indice)' or (' (-'..math.floor((1-packed/original)*100)..'%)'))
+    local paths={}; for _,selectedItem in ipairs(chosen) do paths[#paths+1]=selectedItem.path end
+    local original,packed=services.compressMany(paths,target,guard)
+    status=#paths..' item(ns): '..sizeLabel(original)..' -> '..sizeLabel(packed)..(packed>=original and ' (inclui nomes/indice)' or (' (-'..math.floor((1-packed/original)*100)..'%)'))
   end
   filter=''
 end
@@ -842,7 +849,14 @@ local function action(command)
     status=(clipboard.move and 'Mover ' or 'Copiar ')..#items..' item(ns). Destino + V.'
   elseif command == 'v' then
     if not clipboard then error('Use C para copiar primeiro.', 0) end
-    local targets,conflicts={},{ }
+    local targets,conflicts={},{}
+    local function treeSize(target)
+      if not fs.isDir(target) then return fs.getSize(target),1 end
+      local bytes,count=0,1
+      for _,name in ipairs(fs.list(target)) do local b,n=treeSize(fs.combine(target,name)); bytes,count=bytes+b,count+n end
+      return bytes,count
+    end
+    local totalBytes,totalEntries=0,0
     for i,item in ipairs(clipboard.items) do
       local found=false
       for _,candidate in ipairs(sources) do if candidate.key==item.owner then found=true end end
@@ -851,23 +865,41 @@ local function action(command)
       if fs.exists(dest) then conflicts[#conflicts+1]=item.name end
       if dest==item.path or dest:sub(1,#item.path+1)==item.path..'/' then error('Nao copie uma pasta para dentro dela mesma: '..item.name,0) end
       targets[i]=dest
+      local bytes,count=treeSize(item.path); totalBytes,totalEntries=totalBytes+bytes,totalEntries+count
     end
     if #conflicts>0 then
       if #clipboard.items==1 then targets[1]=newName('Ja existe. Novo nome para a copia:'); if not targets[1] then return end
       else error('Ja existem no destino: '..table.concat(conflicts,', ')..'. Renomeie ou remova antes.',0) end
     end
     for _,dest in ipairs(targets) do services.assertWritable(dest) end
+    local free,capacity=fs.getFreeSpace(path()),fs.getCapacity(path())
+    local required=totalBytes+totalEntries*1024
+    if type(free)=='number' and required>free then
+      local used=type(capacity)=='number' and capacity>0 and math.floor((capacity-free)/capacity*100+0.5) or nil
+      show({'A operacao nao foi iniciada.','',
+        'Dados selecionados: '..sizeLabel(totalBytes),'Reserva estimada: '..sizeLabel(required),
+        'Espaco livre: '..sizeLabel(free),used and ('Unidade em '..used..'% de uso.') or '', '',
+        current().virtual and 'RAID precisa de espaco para blocos, paridade e publicacao segura.' or 'Libere espaco ou escolha outra unidade.'},' Espaco insuficiente')
+      return
+    end
+    if current().virtual and type(free)=='number' and type(capacity)=='number' and capacity>0 then
+      local projected=math.floor((capacity-free+required)/capacity*100+0.5)
+      if projected>=90 and not confirm('Aviso: esta unidade RAID pode chegar a aproximadamente '..projected..'% de uso. Continuar?') then return end
+    end
+    local count=#clipboard.items
+    local update=progress(clipboard.move and 'Mover' or 'Copiar')
+    update(0,count,'Preparando '..count..' item(ns)...')
     if clipboard.move then
-      local count=#clipboard.items
       while #clipboard.items>0 do
         local item=clipboard.items[1]; local dest=targets[count-#clipboard.items+1]
         local fromGuard,toGuard=pathGuard(item.path),pathGuard(dest)
         services.moveItem(item.path,dest,function() fromGuard(); toGuard() end)
         table.remove(clipboard.items,1)
+        update(count-#clipboard.items,count,item.name)
       end
       clipboard=nil; status=count..' item(ns) movidos e verificados.'
     else
-      for i,item in ipairs(clipboard.items) do fs.copy(item.path,targets[i]) end
+      for i,item in ipairs(clipboard.items) do fs.copy(item.path,targets[i]); update(i,count,item.name) end
       status=#clipboard.items..' item(ns) copiados.'
     end
   elseif command == 'r' then

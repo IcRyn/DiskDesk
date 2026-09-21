@@ -90,7 +90,7 @@ Se faltar espaço ou houver falha, a origem fica preservada enquanto a cópia n�
 
 Use **A → RAID e backup → Unidades RAID em tempo real → Criar unidade RAID**. Escolha RAID 0, 1, 5, 6 ou 1+0, marque os disquetes e dê um nome. A unidade aparece em **D: unidades**, por exemplo **RAID 0 - Trabalho**. As listas aceitam roda do mouse e setas quando há mais unidades do que cabe na tela.
 
-Use **C** para copiar ou **M** para mover, marque até 64 arquivos e pastas da tela atual, abra o destino e pressione **V**. Isso também funciona entre o computador, disquetes e unidades RAID. Os dados são distribuídos automaticamente durante a gravação, sem compactação. O espaço livre e a porcentagem atualizam quando a operação termina. **N/T** cria pastas/textos, **R** renomeia e **Delete** exclui. O original de cada movimento só é removido após sua cópia ser verificada.
+Use **C** para copiar ou **M** para mover, marque até 64 arquivos e pastas da tela atual, escolha o botão ciano **CONFIRMAR**, abra o destino e pressione **V**. Isso também funciona entre o computador, disquetes e unidades RAID. Uma barra mostra o avanço por item. Antes de começar, o DiskDesk compara o tamanho estimado com o espaço livre; em RAID quase cheio, avisa quando a operação não cabe ou quando a ocupação projetada chega a 90%. Os dados são distribuídos automaticamente durante a gravação, sem compactação. **N/T** cria pastas/textos, **R** renomeia e **Delete** exclui. O original de cada movimento só é removido após sua cópia ser verificada.
 
 | Modo | Mínimo | Capacidade útil antes dos índices | Redundância |
 |---|---|---|---|
@@ -114,7 +114,7 @@ Uma falha pode deixar blocos temporários ou antigos ocupando espaço. O program
 
 ## Compactar e extrair
 
-Selecione um arquivo ou pasta e use **A → Compactar e extrair**, ou **Z** para compactar e **Y** para extrair. O formato próprio **`.ddz`** preserva nomes, estrutura, pastas vazias e dados binários. Pode compactar uma pasta e enviar o pacote por wireless.
+Use **A → Compactar e extrair**, ou pressione **Z**, marque até 64 arquivos e pastas da tela atual e escolha o botão ciano **CONFIRMAR**. O DiskDesk cria um único pacote com todos os itens selecionados. **Y** extrai o pacote. O formato próprio **`.ddz`** preserva nomes, estrutura, pastas vazias e dados binários. Você também pode enviar o pacote por wireless.
 
 Agora escreve **DDZ2**, com índice binário, números de tamanho variável e referências às pastas pai, evitando repetir os caminhos completos. Comprime índice e conteúdo juntos com LZW quando isso reduz o tamanho; caso contrário guarda essa estrutura binária sem LZW. Continua extraindo os pacotes DDZ1 antigos; versões antigas do DiskDesk não leem DDZ2.
 

@@ -814,18 +814,24 @@ local function numberReader(data)
   end
   return take,number,function() return pos end
 end
-function M.archivePack(source,guard)
+function M.archivePackMany(sources,guard)
   guard=guard or function() end
   guard()
-  if fs.isDriveRoot(source) then fail('Selecione um arquivo ou pasta dentro da unidade.') end
-  local name=fs.getName(source)
-  if not M.safeName(name) then fail('Nome invalido para o pacote.') end
-  local entries,total
-  if fs.isDir(source) then
-    entries,total=inventory(source,guard,true)
-    for _,entry in ipairs(entries) do entry.path=name..'/'..entry.path end
-    table.insert(entries,1,{path=name,dir=true})
-  else entries={{path=name,dir=false}}; total=fs.getSize(source) end
+  if type(sources)~='table' or #sources<1 or #sources>64 then fail('Escolha de 1 a 64 itens para compactar.') end
+  local entries,total,seen={},0,{}
+  for _,source in ipairs(sources) do
+    if fs.isDriveRoot(source) then fail('Selecione itens dentro da unidade.') end
+    local name=fs.getName(source)
+    if not M.safeName(name) or seen[name:lower()] then fail('Nomes repetidos ou invalidos no pacote.') end
+    seen[name:lower()]=true
+    if fs.isDir(source) then
+      local nested,size=inventory(source,guard,true); total=total+size
+      entries[#entries+1]={path=name,dir=true}
+      for _,entry in ipairs(nested) do
+        entry.source=fs.combine(source,entry.path); entry.path=name..'/'..entry.path; entries[#entries+1]=entry
+      end
+    else entries[#entries+1]={path=name,dir=false,source=source}; total=total+fs.getSize(source) end
+  end
   if total>archiveLimit or #entries>1024 then fail('Limite DDZ: 512 KiB originais e 1024 itens.') end
   local blocks,actualTotal,parents={varint(#entries)},0,{['']=0}
   for i,entry in ipairs(entries) do
@@ -837,8 +843,7 @@ function M.archivePack(source,guard)
     blocks[#blocks+1]=varint(parent)..varint(#basename)..basename..string.char(entry.dir and 0 or 1)
     if entry.dir then parents[entry.path]=i end
     if not entry.dir then
-      local path=fs.combine(fs.getDir(source),entry.path)
-      local raw=readBounded(path,archiveLimit-actualTotal)
+      local raw=readBounded(entry.source,archiveLimit-actualTotal)
       actualTotal=actualTotal+#raw
       blocks[#blocks+1]=varint(#raw)..raw
     end
@@ -851,17 +856,21 @@ function M.archivePack(source,guard)
   local hashBytes={}; for _=1,4 do hashBytes[#hashBytes+1]=string.char(hash%256); hash=math.floor(hash/256) end
   return 'DDZ2'..string.char(useLzw and 1 or 0)..varint(#body)..table.concat(hashBytes)..(useLzw and packed or body),actualTotal
 end
-function M.compress(source,target,guard)
+function M.archivePack(source,guard) return M.archivePackMany({source},guard) end
+function M.compressMany(sources,target,guard)
   guard=guard or function() end
   guard(); M.assertWritable(target)
   if fs.exists(target) or fs.exists(target..'.partial') then fail('Destino ja existe.') end
-  if target==source or target:sub(1,#source+1)==source..'/' then fail('Salve o pacote fora da pasta de origem.') end
-  local payload,actualTotal=M.archivePack(source,guard)
+  for _,source in ipairs(sources) do
+    if target==source or target:sub(1,#source+1)==source..'/' then fail('Salve o pacote fora das pastas de origem.') end
+  end
+  local payload,actualTotal=M.archivePackMany(sources,guard)
   guard(); room(fs.getDir(target),#payload+1024)
   writeVerified(target..'.partial',payload,guard)
   guard(); fs.move(target..'.partial',target)
   return actualTotal,#payload
 end
+function M.compress(source,target,guard) return M.compressMany({source},target,guard) end
 function M.archiveExtract(data,target,guard)
   guard=guard or function() end
   guard(); M.assertWritable(target)
