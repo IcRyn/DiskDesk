@@ -226,7 +226,13 @@ local function send(peer, packet)
 end
 -- Only recent completed transfers can be acknowledged in the background.
 function M.handleMessage(peer, msg, protocol)
-  if protocol ~= M.protocol or type(msg) ~= 'table' or msg.kind ~= 'finish' then return end
+  if protocol ~= M.protocol or type(msg) ~= 'table' then return end
+  if msg.kind=='discover' and type(msg.token)=='string' and #msg.token<=96 then
+    local label=os.getComputerLabel and os.getComputerLabel() or nil
+    pcall(send,peer,{kind='announce',token=msg.token,label=tostring(label or ('Computador '..os.getComputerID())):sub(1,48)})
+    return
+  end
+  if msg.kind ~= 'finish' then return end
   for _, receipt in ipairs(receipts) do
     if receipt.peer == peer and receipt.token == msg.token and os.clock() < receipt.untilTime then
       pcall(send, peer, {kind = 'done', token = msg.token}); return
@@ -291,6 +297,22 @@ function M.sendFile(path, peer, guard, progress)
   close(handle)
   if not ok then fail(err) end
   return name
+end
+function M.discoverWireless(seconds)
+  M.openWireless()
+  if type(rednet.broadcast)~='function' then fail('Rednet nao permite busca automatica.') end
+  local session=token(); rednet.broadcast({kind='discover',token=session},M.protocol)
+  local timer=os.startTimer(seconds or 2); local found={}
+  while true do
+    local event,a,b,c=os.pullEvent()
+    if event=='timer' and a==timer then break end
+    if event=='key' and (a==keys.escape or a==keys.f1) then os.cancelTimer(timer); break end
+    if event=='rednet_message' and c==M.protocol and type(b)=='table' and b.kind=='announce' and b.token==session and a~=os.getComputerID() then
+      found[a]={id=a,label=type(b.label)=='string' and b.label:sub(1,48) or ('Computador '..a)}
+    end
+  end
+  local result={}; for _,peer in pairs(found) do result[#result+1]=peer end
+  table.sort(result,function(a,b) return a.id<b.id end); return result
 end
 function M.sendFiles(paths,peer,guard,progress)
   if type(paths)~='table' or #paths<1 or #paths>32 then fail('Escolha de 1 a 32 arquivos.') end

@@ -24,7 +24,7 @@ Depois, execute **`/diskdesk`** de qualquer pasta (ou `diskdesk` na raiz).
 
 Ao atualizar, a pasta antiga `/diskdesk-app` e o atalho anterior são guardados em `/diskdesk-backup-<identificador>/previous/`. Os arquivos novos são preparados antes de substituir a instalação; se a publicação falhar, tenta restaurar a versão anterior e informa a pasta de recuperação. O instalador não modifica `startup` nem arquivos dos disquetes. Se a energia acabar durante a instalação, consulte essa pasta para recuperação manual.
 
-O instalador ainda precisa ser transferido para o jogo uma vez. O conteúdo interno agora é compactado e o arquivo ocupa cerca de 118 KiB, cabendo em um floppy vazio de 128 KiB. O download direto é mais simples. Depois de transferido, ele funciona sem HTTP.
+O instalador ainda precisa ser transferido para o jogo uma vez. O conteúdo interno é compactado e o arquivo ocupa cerca de 126 KiB, cabendo por pouco em um floppy vazio de 128 KiB. O download direto é mais simples. Depois de transferido, ele funciona sem HTTP.
 
 ### Instalação manual
 
@@ -155,7 +155,7 @@ Abra o disquete que contém os backups, use **A → RAID e backup → Restaurar 
 Instale o DiskDesk 3 nos dois computadores e conecte um **Wireless Modem** ou **Ender Modem** em cada. Precisam estar ligados e dentro do alcance da conexão; o DiskDesk não instala repetidores.
 
 1. **Destino:** abra a pasta onde quer salvar e use **A → Rede wireless → Receber**. A tela mostra o ID; também está no cabeçalho. Aguarda uma oferta por até 60 segundos, com F1 para cancelar.
-2. **Origem:** use **A → Rede wireless → Enviar**, marque até 32 arquivos da pasta atual e digite o ID do destino.
+2. **Origem:** use **A → Rede wireless → Enviar**, marque até 32 arquivos da pasta atual e escolha procurar computadores DiskDesk ou informar o ID manualmente.
 3. **Origem:** confira a quantidade, o tamanho total e o ID antes de confirmar o envio.
 4. **Destino:** confira ID do remetente, quantidade, tamanho total e a pasta de destino antes de aceitar o lote.
 5. Aguarde a confirmação. Cada arquivo aparece na pasta escolhida após ser verificado.
@@ -166,6 +166,10 @@ Se o nome existir, a cópia recebe um sufixo (`arquivo.txt-2`, por exemplo). O a
 
 Rednet não oferece criptografia nem autenticação dos IDs. A confirmação permite escolher ofertas, mas não prova a identidade do remetente. Use em redes de jogadores confiáveis. O checksum detecta erros acidentais; não é uma assinatura de segurança. [Documentação do Rednet](https://tweaked.cc/module/rednet.html).
 
+## Imagens NFP
+
+O explorador reconhece arquivos `.nfp`, formato usado pelo Paint do CraftOS. Abra a imagem com Enter ou pelo menu de contexto. O visualizador mostra as cores no próprio terminal e permite mover imagens maiores que a tela com setas ou roda do mouse. PNG, JPEG e outros formatos precisam ser convertidos para NFP antes de serem usados no jogo.
+
 ## Impressora e sons
 
 Conecte uma **Printer**, abasteça com papel e corante, selecione um texto e pressione P. O programa quebra linhas e divide em páginas. Se faltar material ou a saída estiver cheia, reabasteça e tente novamente; pode voltar ao explorador e continuar com P. O trabalho fica na memória: não reinicie nem imprima com outro programa enquanto houver trabalho pendente.
@@ -174,7 +178,7 @@ Conecte um **Speaker** para o acorde agudo ao inserir disco e grave ao retirar. 
 
 ## Limites e testes
 
-Visualização e impressão aceitam textos até 128 KiB; não interpretam imagens ou PDFs. A interface usa o terminal do computador, não monitor externo. Binários podem ser copiados, incluídos no backup e transferidos por wireless.
+Visualização e impressão aceitam textos até 128 KiB. O visualizador abre imagens NFP de até 256 KiB; impressão de imagens, PNG, JPEG e PDF não é suportada. A interface usa o terminal do computador, não monitor externo. Binários podem ser copiados, incluídos no backup e transferidos por wireless.
 
 Testes com Lua e APIs simuladas incluem transferência com perda de pacotes, DDZ1/DDZ2, discos trocados durante gravação, publicação interrompida, reconstrução em substitutos e todas as duplas de discos ausentes em um RAID 6 de oito membros. RAID 1+0 também testa perdas dentro do mesmo par e entre pares distintos. A prévia vem das escritas reais no terminal simulado, com fonte aproximada. Ainda é necessário validar no Minecraft com periféricos reais.
 

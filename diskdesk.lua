@@ -237,6 +237,43 @@ local function show(lines, title)
     offset = math.max(0, math.min(offset, math.max(0, #lines - H + 2)))
   end
 end
+local function viewImage(file)
+  if fs.getSize(file)>256*1024 then error('Imagem NFP excede 256 KiB.',0) end
+  local handle,err=fs.open(file,'r'); if not handle then error(err,0) end
+  local image,width={},0
+  while true do
+    local raw=handle.readLine(); if raw==nil then break end
+    local row={}; width=math.max(width,#raw)
+    for x=1,#raw do
+      local digit=tonumber(raw:sub(x,x),16)
+      if digit then row[x]=2^digit end
+    end
+    image[#image+1]=row
+  end
+  handle.close()
+  if #image==0 or width==0 then error('Imagem NFP vazia ou invalida.',0) end
+  local left,top=0,0
+  while true do
+    W,H=term.getSize(); local rows=math.max(1,H-3)
+    left=math.max(0,math.min(left,math.max(0,width-W)))
+    top=math.max(0,math.min(top,math.max(0,#image-rows)))
+    term.setBackgroundColor(theme.bg); term.clear()
+    line(1,' IMAGEM / '..fs.getName(file),theme.accent,colors.black)
+    for y=1,rows do
+      local row=image[top+y]
+      if row then for x=1,W do local color=row[left+x]; if color then put(x,y+1,1,' ',color) end end end
+    end
+    line(H-1,' '..width..'x'..#image..' | posicao '..(left+1)..','..(top+1),theme.panel,theme.muted)
+    line(H,'[Voltar] F1/Enter | Setas/roda: mover',theme.select)
+    local event,a,b,c=os.pullEvent()
+    if event=='key' then
+      if a==keys.f1 or a==keys.escape or a==keys.enter then return end
+      if a==keys.left then left=left-1 elseif a==keys.right then left=left+1
+      elseif a==keys.up then top=top-1 elseif a==keys.down then top=top+1 end
+    elseif event=='mouse_scroll' then top=top+a
+    elseif event=='mouse_click' and a==1 and c==H then return end
+  end
+end
 local function readFile(file)
   if fs.getSize(file) > 128 * 1024 then error('Limite de texto: 128 KiB.', 0) end
   local handle, err = fs.open(file, 'r')
@@ -537,7 +574,20 @@ end
 local function sendWireless()
   local chosen=selectItems('Escolha os arquivos',true,32); if not chosen then return end
   services.openWireless()
-  local peer=tonumber(prompt('ID do computador de destino (abra Receber nele):')); if not peer then return end
+  local method=choose('Escolha o destino',{'Procurar computadores DiskDesk','Digitar ID manualmente'})
+  if not method then return end
+  local peer
+  if method==1 then
+    local peers=services.discoverWireless(2)
+    if #peers==0 then
+      show({'Nenhum DiskDesk respondeu.','Abra o DiskDesk no destino e confira o modem.','Use Digitar ID se a descoberta estiver bloqueada.'},' Busca wireless')
+      return
+    end
+    local labels={}; for i,p in ipairs(peers) do labels[i]=p.label..'  / ID '..p.id end
+    local selectedPeer=choose('Computadores encontrados',labels); if not selectedPeer then return end
+    peer=peers[selectedPeer].id
+  else peer=tonumber(prompt('ID do computador de destino (abra Receber nele):')) end
+  if not peer then return end
   local paths,total={ },0; for _,item in ipairs(chosen) do paths[#paths+1]=item.path; total=total+fs.getSize(item.path) end
   if not confirm('Enviar '..#paths..' arquivo(s), total '..sizeLabel(total)..', para o computador ID '..peer..'?') then return end
   services.sendFiles(paths,peer,function() for _,item in ipairs(chosen) do pathGuard(item.path)() end end,progress('Enviar'))
@@ -739,9 +789,13 @@ local helpTopics={
     'Limites: 512 KiB descompactados e 1024 itens. Arquivos corrompidos ou caminhos invalidos sao rejeitados.'}},
   {title='Rede wireless',text={'Instale DiskDesk e modem wireless nos dois computadores.',
     'No destino: abra a pasta e use G (Receber). Veja o ID na barra inferior.',
-    'Na origem: selecione o arquivo, use S e digite o ID. Aceite a oferta no destino.',
-    'Ate 1 MiB por arquivo, com verificacao e repeticao de pacotes. F1 cancela a espera.',
+    'Na origem: use S e procure computadores DiskDesk ou informe o ID manualmente.',
+    'A busca mostra nome e ID dos computadores com DiskDesk aberto e modem ativo.',
+    'Ate 32 arquivos, 1 MiB por arquivo e 8 MiB por lote. F1 cancela a espera.',
     'A rede Rednet nao e criptografada. Use com jogadores confiaveis.'}},
+  {title='Imagens NFP',text={'Arquivos .nfp aparecem junto dos demais arquivos.',
+    'Pressione Enter ou Abrir para visualizar. Setas e roda movem imagens maiores que a tela.',
+    'NFP e o formato do Paint do CraftOS. PNG e JPG precisam ser convertidos antes.'}},
   {title='Impressora',text={'Conecte Printer e abasteca com papel e corante. Selecione texto e use P.',
     'O texto e dividido automaticamente em paginas. Visualizacao e impressao: ate 128 KiB.',
     'Se faltar material ou a saida encher, resolva e tente de novo. P retoma um trabalho pausado.',
@@ -843,6 +897,7 @@ local function action(command)
   elseif command == 'open' then
     local item = requireItem()
     if item.dir then folder = fs.combine(folder, item.name); selected, scroll, filter = 1, 0, ''
+    elseif item.name:lower():match('%.nfp$') then viewImage(item.path)
     else show(textLines(readFile(item.path), W), item.name) end
   elseif command == 'n' then
     local full = newName('Nome da nova pasta:'); if full then fs.makeDir(full) end
